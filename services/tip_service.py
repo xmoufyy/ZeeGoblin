@@ -22,6 +22,7 @@ from database.models import (
     Payment,
     PaymentAward,
     PaymentBatch,
+    PaymentStatus,
     TipAward,
     VerificationSource,
     Wallet,
@@ -167,6 +168,33 @@ def to_row(
         payment_signature=signature,
         current_wallet=current_wallet,
     )
+
+
+# Everything still owed or in progress: not yet paid and not voided.
+OUTSTANDING_AWARD_STATUSES = (
+    AwardStatus.AWAITING_WALLET,
+    AwardStatus.PENDING_REVIEW,
+    AwardStatus.APPROVED,
+    AwardStatus.QUEUED,
+    AwardStatus.PAYMENT_SUBMITTED,
+    AwardStatus.DISPUTED,
+)
+
+
+@dataclass(frozen=True)
+class TipReport:
+    created: dict[AwardStatus, StatusTotal]  # awards created in the window, by current status
+    confirmed_payments: int
+    confirmed_lamports: int
+    outstanding_lamports: int  # across the whole ledger, not just the window
+
+    @property
+    def created_count(self) -> int:
+        return sum(total.count for total in self.created.values())
+
+    @property
+    def awarded_lamports(self) -> int:
+        return sum(t.lamports for s, t in self.created.items() if s != AwardStatus.VOIDED)
 
 
 async def _status_totals(session: AsyncSession, *conditions) -> dict[AwardStatus, StatusTotal]:  # type: ignore[no-untyped-def]
@@ -702,6 +730,45 @@ class TipService:
                 .offset((page - 1) * page_size)
             )
             return Page([to_row(*row) for row in rows], page, page_size, int(total or 0))
+
+    async def report(
+        self, actor: Actor, *, window: timedelta | None = None, event_id: int | None = None
+    ) -> TipReport:
+        """Awards created in the last ``window`` (or for one roll call) + overall outstanding."""
+        require(actor, Permission.AWARD_VIEW_QUEUE)
+        since = self._clock() - window if window is not None else None
+        scope = []
+        if since is not None:
+            scope.append(TipAward.created_at >= since)
+        if event_id is not None:
+            scope.append(TipAward.event_id == event_id)
+        async with self._db.transaction() as session:
+            created = await _status_totals(session, *scope)
+            confirmed_conditions = [Payment.status == PaymentStatus.MANUALLY_CONFIRMED]
+            if since is not None:
+                confirmed_conditions.append(Payment.confirmed_at >= since)
+            if event_id is not None:
+                confirmed_conditions.append(
+                    Payment.id.in_(
+                        select(PaymentAward.payment_id)
+                        .join(TipAward, TipAward.id == PaymentAward.award_id)
+                        .where(TipAward.event_id == event_id)
+                    )
+                )
+            confirmed_count, confirmed_lamports = (
+                await session.execute(
+                    select(func.count(), func.coalesce(func.sum(Payment.amount_lamports), 0)).where(
+                        *confirmed_conditions
+                    )
+                )
+            ).one()
+            everything = await _status_totals(session)
+        return TipReport(
+            created=created,
+            confirmed_payments=int(confirmed_count),
+            confirmed_lamports=int(confirmed_lamports),
+            outstanding_lamports=sum(everything[s].lamports for s in OUTSTANDING_AWARD_STATUSES),
+        )
 
     async def ledger_summary(self, actor: Actor) -> LedgerSummary:
         require(actor, Permission.AWARD_VIEW_QUEUE)

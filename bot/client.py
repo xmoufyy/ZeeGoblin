@@ -30,6 +30,7 @@ EXTENSIONS = (
     "bot.cogs.promo",
     "bot.cogs.staff",
     "bot.cogs.fun",
+    "bot.cogs.reports",
 )
 
 

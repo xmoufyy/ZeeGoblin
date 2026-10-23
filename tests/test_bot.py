@@ -51,6 +51,8 @@ EXPECTED_COMMANDS = {
     "rank": set(),
     "roast": set(),
     "notifications": set(),
+    "report": {"tips"},
+    "help": set(),
 }
 
 
@@ -548,3 +550,73 @@ async def test_remind_missing_wallets_button(bot, services, monkeypatch) -> None
 
     with pytest.raises(PermissionDenied):  # members can't trigger reminders
         await remind_missing_wallets(fake_interaction(bot, 50))
+
+
+def test_help_only_shows_what_you_can_use() -> None:
+    from bot.cogs.reports import help_sections
+    from tests.conftest import plain_member
+
+    member_sections = [name for name, _ in help_sections(plain_member(5))]
+    assert member_sections == ["👑 Members", "👛 Wallet"]
+    owner_sections = [name for name, _ in help_sections(OWNER_ACTOR)]
+    assert "💸 Payment tools" in owner_sections and "🛠️ Admin" in owner_sections
+    mod_sections = [name for name, _ in help_sections(MOD)]
+    assert "🕵️ Moderator tools" in mod_sections and "💸 Payment tools" not in mod_sections
+
+
+async def test_report_command(bot, services) -> None:
+    await services.wallets.set_wallet(member(60), make_address(60))
+    award = await services.tips.add_manual(MOD, member(60), 50_000_000, "Big call")
+    await services.tips.approve(HEAD_MOD, award.id)
+    cog = bot.get_cog("ReportCog")
+    sent: dict[str, object] = {}
+    click = fake_interaction(bot, MOD.discord_id, role_ids=(MOD_ROLE,))
+
+    async def capture(content=None, **kwargs):  # type: ignore[no-untyped-def]
+        sent.update(kwargs)
+
+    click.followup.send = capture
+    await cog.tips.callback(cog, click, None, None)
+    fields = {f.name: f.value for f in sent["embed"].fields}
+    assert fields["Awards created"] == "**1**" and fields["SOL awarded"] == "**0.05 SOL**"
+    assert "0.05 SOL" in fields["🏦 Outstanding (whole ledger)"]
+
+
+async def test_award_quick_actions(bot, services, monkeypatch) -> None:
+    from bot.views.award_view import AwardActionsView
+
+    await services.wallets.set_wallet(member(61), make_address(61))
+    award = await services.tips.add_manual(MOD, member(61), 10_000_000, "Clip")
+
+    def labels(actor):  # type: ignore[no-untyped-def]
+        view = AwardActionsView(1, award, actor, embed_for=lambda r: None, show_history=None)
+        return [b.label for b in view.children]
+
+    from tests.conftest import plain_member
+
+    assert labels(HEAD_MOD) == ["✅ Approve", "🚫 Void", "⚠️ Flag", "📜 Member's tips"]
+    assert labels(MOD) == ["⚠️ Flag", "📜 Member's tips"]
+    assert labels(plain_member(61)) == []
+
+    edits: list[dict[str, object]] = []
+
+    class FakeMessage:
+        async def edit(self, **kwargs: object) -> None:
+            edits.append(kwargs)
+
+    view = AwardActionsView(
+        HEAD_MOD.discord_id, award, HEAD_MOD, embed_for=lambda r: r.status, show_history=None
+    )
+    view.message = FakeMessage()  # type: ignore[assignment]
+    click = fake_interaction(bot, HEAD_MOD.discord_id, role_ids=(HEAD_MOD_ROLE,))
+    await view.children[0].callback(click)  # Approve
+    assert edits[-1]["embed"] == AwardStatus.APPROVED
+    # After approval, Approve disappears; Void and Flag remain for an approved award.
+    assert [b.label for b in view.children] == ["🚫 Void", "⚠️ Flag", "📜 Member's tips"]
+
+    stale = fake_interaction(bot, HEAD_MOD.discord_id, role_ids=(HEAD_MOD_ROLE,))
+    stale_view = AwardActionsView(
+        HEAD_MOD.discord_id, award, HEAD_MOD, embed_for=lambda r: r.status, show_history=None
+    )
+    await stale_view.children[0].callback(stale)  # Approve again from an old message
+    assert "can't be approved" in stale.response.messages[0]
