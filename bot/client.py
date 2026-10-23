@@ -29,6 +29,7 @@ EXTENSIONS = (
     "bot.cogs.administration",
     "bot.cogs.promo",
     "bot.cogs.staff",
+    "bot.cogs.fun",
 )
 
 

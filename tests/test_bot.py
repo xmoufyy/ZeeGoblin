@@ -47,6 +47,9 @@ EXPECTED_COMMANDS = {
     "admin": {"audit", "presence", "whoami"},
     "solpump": set(),
     "staff": set(),
+    "leaderboard": set(),
+    "rank": set(),
+    "roast": set(),
 }
 
 
@@ -463,3 +466,37 @@ async def test_review_fixes(bot, services, clock, monkeypatch) -> None:
         f"zeegoblin-batch-{detail.batch.id}.csv",
         f"zeegoblin-batch-{detail.batch.id}-wallet-summary.csv",
     ]
+
+
+async def test_fun_commands(bot, services, clock) -> None:
+    cog = bot.get_cog("FunCog")
+
+    empty = fake_interaction(bot, 5)
+    await cog.leaderboard.callback(cog, empty)
+    assert "throne is empty" in empty.response.messages[0]
+
+    event = await services.rollcalls.start(
+        MOD, guild_id=GUILD_ID, channel_id=1, duration_minutes=1, reward_lamports=1_000
+    )
+    await services.rollcalls.check_in(event.id, member(5))
+    clock.advance(minutes=2)
+    await services.rollcalls.finalize_due()
+
+    board = fake_interaction(bot, 5)
+    await cog.leaderboard.callback(cog, board)
+    assert "<@5>" in board.response.messages[0] and "Goblin Peasant" in board.response.messages[0]
+
+    def target(discord_id: int, *, is_bot: bool = False):  # type: ignore[no-untyped-def]
+        return SimpleNamespace(id=discord_id, bot=is_bot, mention=f"<@{discord_id}>")
+
+    roast = fake_interaction(bot, 5)
+    await cog.roast.callback(cog, roast, target(6))
+    assert "<@6>" in roast.response.messages[0]
+
+    zee = fake_interaction(bot, 5)
+    await cog.roast.callback(cog, zee, target(bot.settings.owner_user_id))
+    assert "keep my job" in zee.response.messages[0]
+
+    toaster = fake_interaction(bot, 5)
+    await cog.roast.callback(cog, toaster, target(7, is_bot=True))
+    assert "toaster" in toaster.response.messages[0]

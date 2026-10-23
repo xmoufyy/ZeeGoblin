@@ -318,6 +318,19 @@ All replies are private (ephemeral) unless noted.
 |---|---|---|
 | `/staff` | Any staff | Overview of everything waiting, with one-click buttons. **🔄 Refresh** updates it. |
 
+**Fun** (public replies, nothing to do with SOL)
+
+| Command | Cooldown | What it does |
+|---|---|---|
+| `/leaderboard` | 30 s per channel | Top 10 roll-call regulars with their 🔥 streaks and goblin ranks. If you're outside the top 10, your own position is added at the bottom. |
+| `/rank member:` | 3 per 30 s | Your (or someone's) goblin rank, total roll calls, current and best streak, leaderboard spot, and a progress bar to the next rank |
+| `/roast member:` | 1 per minute | ZeeGoblin roasts someone with a playful casino/goblin line. It never targets who someone is, doesn't ping, and politely refuses to roast Zee. |
+
+Ranks come only from roll calls that completed (cancelled ones don't count): 🪨 Rock Dweller (0)
+→ 🧌 Goblin Peasant (1) → 🍄 Goblin Scavenger (5) → 🗡️ Goblin Raider (10) → 💎 Goblin Treasurer
+(25) → 🔥 Goblin Warlord (50) → 👑 Goblin King (100). A streak counts the most recent roll calls
+attended in a row.
+
 **Promo**
 
 | Command | Who | What it does |

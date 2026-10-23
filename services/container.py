@@ -10,6 +10,7 @@ from config.settings import Limits
 from database.models import BotSetting
 from database.session import Database
 from services.audit_service import AuditAction, AuditService, record_audit
+from services.community_service import CommunityService
 from services.payment_service import PaymentService
 from services.recovery_service import RecoveryService
 from services.rollcall_service import RollCallService
@@ -60,6 +61,7 @@ class Services:
     audit: AuditService
     recovery: RecoveryService
     settings: SettingsStore
+    community: CommunityService
 
 
 def build_services(db: Database, limits: Limits, clock: Clock = utcnow) -> Services:
@@ -74,4 +76,5 @@ def build_services(db: Database, limits: Limits, clock: Clock = utcnow) -> Servi
         audit=AuditService(db),
         recovery=RecoveryService(rollcalls),
         settings=SettingsStore(db),
+        community=CommunityService(db),
     )
