@@ -44,27 +44,10 @@ from utils.validation import (
     validate_transaction_signature,
 )
 
-BATCH_CSV_HEADER = (
-    "award_id",
-    "discord_user_id",
-    "discord_username",
-    "wallet",
-    "amount_sol",
-    "reason",
-    "event_id",
-    "approved_by",
-    "approved_at",
-    "batch_id",
-)
-SUMMARY_CSV_HEADER = (
-    "batch_id",
-    "wallet",
-    "amount_sol",
-    "award_count",
-    "award_ids",
-    "discord_user_ids",
-    "discord_usernames",
-)
+# Mods pay from these files, so they hold only what's needed to send SOL. Award and batch IDs
+# stay in Discord (/batch view) and are matched automatically by /payment record.
+BATCH_CSV_HEADER = ("discord_username", "wallet", "amount_sol", "reason")
+SUMMARY_CSV_HEADER = BATCH_CSV_HEADER
 
 
 @dataclass(frozen=True)
@@ -148,38 +131,30 @@ def _wallet_totals(lines: list[BatchLine]) -> list[WalletTotal]:
 
 
 def batch_csv(detail: BatchDetail) -> bytes:
+    """One row per award, grouped by wallet."""
     return build_csv(
         BATCH_CSV_HEADER,
         (
-            (
-                line.award_id,
-                line.discord_user_id,
-                line.username,
-                line.wallet,
-                format_sol(line.amount_lamports, fixed=True),
-                line.reason,
-                line.event_id if line.event_id is not None else "",
-                line.approved_by_discord_id,
-                line.approved_at.isoformat(),
-                detail.batch.id,
-            )
+            (line.username, line.wallet, format_sol(line.amount_lamports), line.reason)
             for line in sorted(detail.lines, key=lambda item: (item.wallet, item.award_id))
         ),
     )
 
 
 def summary_csv(detail: BatchDetail) -> bytes:
+    """One row per wallet with the total to send - what the payer actually pays from."""
+    reasons: dict[str, list[str]] = defaultdict(list)
+    for line in sorted(detail.lines, key=lambda item: item.award_id):
+        if line.reason not in reasons[line.wallet]:
+            reasons[line.wallet].append(line.reason)
     return build_csv(
         SUMMARY_CSV_HEADER,
         (
             (
-                detail.batch.id,
+                ", ".join(total.usernames),
                 total.wallet,
-                format_sol(total.lamports, fixed=True),
-                len(total.award_ids),
-                " ".join(str(award_id) for award_id in total.award_ids),
-                " ".join(str(user_id) for user_id in total.discord_user_ids),
-                " ".join(total.usernames),
+                format_sol(total.lamports),
+                "; ".join(reasons[total.wallet]),
             )
             for total in detail.wallets
         ),

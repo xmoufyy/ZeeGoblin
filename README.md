@@ -107,11 +107,12 @@ wrong if Python, the dependencies, or `.env` are missing.
 3. Open **OAuth2 → URL Generator**:
    - Scopes: **`bot`** and **`applications.commands`**.
    - Bot permissions: **View Channels, Send Messages, Send Messages in Threads, Embed Links,
-     Attach Files, Read Message History, Add Reactions**.
+     Attach Files, Read Message History, Add Reactions, Mention Everyone**. The last one lets the
+     roll-call announcement ping `@everyone`.
    - Open the generated URL and invite the bot to the Dude-Munity server.
 
    The equivalent invite URL (replace `YOUR_CLIENT_ID`):
-   `https://discord.com/api/oauth2/authorize?client_id=YOUR_CLIENT_ID&scope=bot%20applications.commands&permissions=274878024768`
+   `https://discord.com/api/oauth2/authorize?client_id=YOUR_CLIENT_ID&scope=bot%20applications.commands&permissions=274878155840`
 4. In Discord, turn on **User Settings → Advanced → Developer Mode**. This lets you right-click
    to copy server, user, role, and channel IDs.
 
@@ -147,6 +148,7 @@ hiding is cosmetic, not the security boundary.
 | `MAX_MANUAL_AWARD` | | Largest `/tip add` amount (default 1.0) |
 | `REQUIRE_SEPARATE_PAYMENT_CONFIRMER` | | `true` requires a different staff member to confirm a payment than the one who recorded it (the owner is exempt) |
 | `ENABLE_MESSAGE_CHECKIN` | | `true` also accepts typed "present"/"here" messages. Needs the Message Content intent; if that intent is off, the bot logs a warning and runs with button check-ins only. |
+| `ROLLCALL_PING` | | Who the roll-call announcement pings: `@everyone` (default), `@here`, or empty for no ping |
 | `SYNC_COMMANDS_ON_STARTUP` | | Default `true` |
 | `BOT_ACTIVITY_TYPE` / `BOT_ACTIVITY_TEXT` | | Default `playing` / `Gambling on Solpump`. `custom` shows the text alone, e.g. `🎰 Gamble on Solpump`. |
 | `SOLPUMP_URL` | | Link behind the **Gamble On Solpump** button on `/solpump` (default `https://solpump.io/a/ZEEDUDE`) |
@@ -320,7 +322,9 @@ All replies are private (ephemeral) unless noted.
 1. A mod runs `/rollcall start` in the channel where the announcement should go. With no
    options, it uses the defaults from `.env` (3 minutes, 0.01 SOL).
 2. ZeeGoblin saves the roll call **to the database first**, with its exact UTC deadline, and
-   then posts:
+   then posts the announcement with an **@everyone** ping (change it with `ROLLCALL_PING`). If
+   ZeeGoblin lacks the Mention Everyone permission in that channel, the mod who started the
+   roll call is warned that nobody was pinged.
 
    > **👑 ZEE'S ROLL CALL!** Zee wants to know who's actually here!
    > ⏰ Time remaining: *in 3 minutes* · 💰 Reward: 0.01 SOL · 👥 Checked in: 0 / 500
@@ -369,13 +373,16 @@ pending_review ──approve──▶ approved ──export──▶ queued ─�
 
 1. **Export:** run `/tip export-batch` and confirm. Every approved award is reserved into batch
    `#N`, and two moderators can never export the same award. You get two CSV files:
-   - `zeegoblin-batch-N.csv` has one row per award: `award_id, discord_user_id,
-     discord_username, wallet, amount_sol, reason, event_id, approved_by, approved_at,
-     batch_id`.
+   Both files have the same four columns: `discord_username, wallet, amount_sol, reason`.
    - `zeegoblin-batch-N-wallet-summary.csv` has **one row per wallet with the total to send**.
+     Pay from this one. If a wallet has several awards, their reasons are joined with `;`.
+   - `zeegoblin-batch-N.csv` has one row per award, grouped by wallet, so you can see what
+     each total is made of.
 
-   Amounts have exactly 9 decimal places. Cells that could be read as spreadsheet formulas are
-   escaped. Exporting does **not** mark anything as paid.
+   Award and batch IDs aren't in the files. The batch number is in the file name, and
+   `/payment record` finds a wallet's awards by itself. Amounts are exact (for example `0.01`).
+   Cells that could be read as spreadsheet formulas are escaped. Exporting does **not** mark
+   anything as paid.
 2. **Send:** using your own wallet app, send each wallet in the summary its total.
 3. **Record:** for each transaction, run
    `/payment record batch_id:N wallet:<address> amount:<exact SOL> signature:<tx signature>`.

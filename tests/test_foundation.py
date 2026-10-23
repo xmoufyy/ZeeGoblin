@@ -137,3 +137,15 @@ async def test_solana_rpc_client_reads_statuses() -> None:
 async def test_kick_is_unavailable() -> None:
     with pytest.raises(KickUnavailable):
         await UnavailableKickIntegration().authorization_url(1)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"), [("@everyone", "@everyone"), ("@HERE", "@here"), ("", ""), ("none", "")]
+)
+def test_rollcall_ping_setting(value: str, expected: str) -> None:
+    assert make_settings(rollcall_ping=value).rollcall_ping == expected
+
+
+def test_rollcall_ping_rejects_other_mentions() -> None:
+    with pytest.raises(ValidationError):
+        make_settings(rollcall_ping="<@&123>")

@@ -61,16 +61,22 @@ async def test_batch_creation_and_csv(services) -> None:
         assert (await services.tips.get(HEAD_MOD, award.id)).status == AwardStatus.QUEUED
 
     rows = parse_csv(batch_csv(detail))
-    assert list(rows[0]) == list(BATCH_CSV_HEADER)
+    # Only what a mod needs to send SOL: no award/batch/user IDs.
+    assert list(rows[0]) == ["discord_username", "wallet", "amount_sol", "reason"]
     assert sum(Decimal(r["amount_sol"]) for r in rows) == Decimal("0.13")  # exact totals
-    assert {r["batch_id"] for r in rows} == {str(detail.batch.id)}
-    injected = next(r for r in rows if r["discord_user_id"] == "11")
+    assert {r["amount_sol"] for r in rows} == {"0.01", "0.02", "0.1"}  # readable amounts
+    injected = next(r for r in rows if r["discord_username"] == "member11")
     assert injected["reason"] == "'=HYPERLINK(evil)"
 
     summary = parse_csv(summary_csv(detail))
+    assert list(summary[0]) == list(BATCH_CSV_HEADER)
     by_wallet = {r["wallet"]: r for r in summary}
-    assert Decimal(by_wallet[make_address(10)]["amount_sol"]) == Decimal("0.03")
-    assert by_wallet[make_address(10)]["award_count"] == "2"
+    assert by_wallet[make_address(10)] == {
+        "discord_username": "member10",
+        "wallet": make_address(10),
+        "amount_sol": "0.03",
+        "reason": "Roll call; Call win",
+    }
     assert sum(Decimal(r["amount_sol"]) for r in summary) == Decimal("0.13")
 
 

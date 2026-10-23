@@ -102,8 +102,14 @@ class RollCallCog(commands.GroupCog, group_name="rollcall", group_description="Z
             max_participants=max_participants,
             budget_lamports=parse_sol(budget_sol) if budget_sol else None,
         )
+        ping = self.bot.settings.rollcall_ping  # type: ignore[attr-defined]
         try:
-            message = await channel.send(embed=active_embed(event), view=checkin_view(event.id))
+            message = await channel.send(
+                content=ping or None,
+                embed=active_embed(event),
+                view=checkin_view(event.id),
+                allowed_mentions=discord.AllowedMentions(everyone=bool(ping)),
+            )
         except discord.HTTPException as exc:
             await self.services.rollcalls.abandon_unannounced(event.id, actor.discord_id, str(exc))
             log.warning("Could not post roll call #%s announcement: %s", event.id, exc)
@@ -114,16 +120,22 @@ class RollCallCog(commands.GroupCog, group_name="rollcall", group_description="Z
         await self.services.rollcalls.attach_message(event.id, message.id)
         self._shown_counts[event.id] = 0
         self._last_edit[event.id] = time.monotonic()
-        await reply(
-            interaction,
-            embed=goblin_embed(
-                f"👑 Roll call #{event.id} is live",
-                f"Closes {ts(event.expires_at, 'R')}. {sol(event.reward_lamports)} each, up to "
-                f"{event.participant_cap} people (budget {sol(event.budget_lamports)}).\n"
-                f"[Jump to announcement]({message.jump_url})",
-                colour=PURPLE,
-            ),
+        live = goblin_embed(
+            f"👑 Roll call #{event.id} is live",
+            f"Closes {ts(event.expires_at, 'R')}. {sol(event.reward_lamports)} each, up to "
+            f"{event.participant_cap} people (budget {sol(event.budget_lamports)}).\n"
+            f"[Jump to announcement]({message.jump_url})",
+            colour=PURPLE,
         )
+        if ping and not perms.mention_everyone:
+            live.add_field(
+                name="⚠️ Nobody was pinged",
+                value=f"I don't have **Mention @everyone, @here, and All Roles** in "
+                f"{channel.mention}, so {ping} showed as plain text. Grant it to ZeeGoblin's "
+                "role for this channel.",
+                inline=False,
+            )
+        await reply(interaction, embed=live)
 
     @app_commands.command(name="status", description="Show the running roll call")
     async def status(self, interaction: discord.Interaction) -> None:

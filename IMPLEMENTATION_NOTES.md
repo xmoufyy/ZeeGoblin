@@ -24,8 +24,9 @@ Assumptions and the main technical decisions, with the reasoning behind each.
 - `parse_sol` accepts only plain ASCII decimals with at most 9 fractional digits and a
   12-digit integer part. Decimal conversion runs at 40-digit precision, then an exact-integer
   check is applied.
-- CSV amounts always have 9 decimal places. A test checks that summing the CSV reproduces the
-  batch total exactly.
+- CSV amounts are exact decimals such as `0.01`. A test checks that summing the CSV reproduces
+  the batch total exactly. The CSVs hold only `discord_username, wallet, amount_sol, reason`
+  because mods asked for files without IDs. IDs stay in Discord and in the database.
 
 ## Concurrency (SQLite)
 - Every transaction starts with **`BEGIN IMMEDIATE`**, set up through SQLAlchemy's `begin`

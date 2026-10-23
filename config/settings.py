@@ -101,6 +101,8 @@ class Settings(BaseSettings):
     require_separate_payment_confirmer: bool = False
 
     enable_message_checkin: bool = False
+    # Who gets pinged when a roll call starts: "@everyone", "@here", or "" for no ping.
+    rollcall_ping: str = "@everyone"
     sync_commands_on_startup: bool = True
 
     bot_activity_type: ActivityType = ActivityType.PLAYING
@@ -124,6 +126,16 @@ class Settings(BaseSettings):
     @classmethod
     def _blank_is_none(cls, value: object) -> object:
         return None if value in ("", "0", 0) else value
+
+    @field_validator("rollcall_ping")
+    @classmethod
+    def _rollcall_ping(cls, value: str) -> str:
+        value = value.strip().lower()
+        if value in ("", "none", "off"):
+            return ""
+        if value not in ("@everyone", "@here"):
+            raise ValueError("ROLLCALL_PING must be @everyone, @here, or empty for no ping")
+        return value
 
     @field_validator("solpump_url")
     @classmethod
