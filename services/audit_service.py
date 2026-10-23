@@ -39,6 +39,7 @@ class AuditAction(StrEnum):
     BATCH_CREATED = "batch.created"
     BATCH_CANCELLED = "batch.cancelled"
     BATCH_COMPLETED = "batch.completed"
+    BATCH_EXPORTED = "batch.exported"
     PAYMENT_SUBMITTED = "payment.submitted"
     PAYMENT_FLAGGED = "payment.flagged"
     PAYMENT_CONFIRMED = "payment.confirmed"

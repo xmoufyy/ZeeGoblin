@@ -142,3 +142,41 @@ async def test_wallet_reminders_rate_limited_and_respect_opt_out(services, clock
     assert await services.notifications.opted_out([40, 41, 999]) == {41}
     await services.notifications.set_dm_opt_out(member(41), False)
     assert await services.notifications.opted_out([41]) == set()
+
+
+async def test_a08_integrity_triggers_and_export_audit(services, db) -> None:
+    """A-08/A-09: wallet history and payment links are append-only; CSV downloads audited."""
+    import pytest
+    from sqlalchemy import text
+
+    await services.wallets.set_wallet(member(70), make_address(70))
+    event = await services.rollcalls.start(
+        MOD, guild_id=7, channel_id=7, duration_minutes=1, reward_lamports=1_000
+    )
+    await services.rollcalls.check_in(event.id, member(70))  # rows must exist for triggers
+    award = await services.tips.add_manual(MOD, member(70), 1_000, "x")
+    await services.tips.approve(HEAD_MOD, award.id)
+    detail = await services.payments.create_batch(PAYMENT_MOD)
+    await services.payments.record_payment(
+        PAYMENT_MOD,
+        batch_id=detail.batch.id,
+        wallet=make_address(70),
+        amount_lamports=1_000,
+        signature=make_signature(70),
+    )
+    for statement in (
+        "UPDATE wallet_history SET new_address = 'x'",
+        "DELETE FROM wallet_history",
+        "DELETE FROM payment_awards",
+        "UPDATE payment_awards SET award_id = 999",
+        "DELETE FROM payments",
+        "DELETE FROM payment_batches",
+        "DELETE FROM event_entries",
+    ):
+        with pytest.raises(Exception, match="not allowed"):
+            async with db.transaction() as session:
+                await session.execute(text(statement))
+
+    await services.payments.export_batch(PAYMENT_MOD, detail.batch.id)
+    exports = await services.audit.list(OWNER, action_prefix="batch.exported")
+    assert [e.actor_discord_id for e in exports.items] == [PAYMENT_MOD.discord_id]

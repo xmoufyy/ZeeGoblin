@@ -273,6 +273,23 @@ class PaymentService:
                 raise NotFound(f"Batch #{batch_id} doesn't exist.")
             return await self._detail(session, batch)
 
+    async def export_batch(self, actor: Actor, batch_id: int) -> BatchDetail:
+        """Batch detail for a CSV download; the download is audited (files contain wallets)."""
+        require(actor, Permission.BATCH_EXPORT)
+        async with self._db.transaction() as session:
+            batch = await session.get(PaymentBatch, batch_id)
+            if batch is None:
+                raise NotFound(f"Batch #{batch_id} doesn't exist.")
+            record_audit(
+                session,
+                actor_id=actor.discord_id,
+                action=AuditAction.BATCH_EXPORTED,
+                entity_type="batch",
+                entity_id=batch_id,
+                after={"status": batch.status},
+            )
+            return await self._detail(session, batch)
+
     async def list_batches(
         self,
         actor: Actor,

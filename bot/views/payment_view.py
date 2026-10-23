@@ -204,7 +204,7 @@ class BatchPayView(OwnedView):
 
     async def _download(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(ephemeral=True, thinking=True)
-        detail = await bot_of(interaction).services.payments.get_batch(
+        detail = await bot_of(interaction).services.payments.export_batch(
             actor_of(interaction), self.batch_id
         )
         await interaction.followup.send(
