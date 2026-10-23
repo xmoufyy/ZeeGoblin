@@ -125,3 +125,23 @@ Assumptions and the main technical decisions, with the reasoning behind each.
   change ledger state in Phase 1.
 - There is no roll-call entry correction command. The workaround (`/tip add` and `/tip void`)
   is documented.
+
+## 2026-10-23 audit round
+
+Full findings are in `docs/CODE_AUDIT.md`; features are in `docs/QOL_IMPROVEMENTS.md`.
+
+- **One approval planner.** `TipService._plan` decides eligibility for every approval path:
+  `approve`, `approve_event`, `approve_many`, and `preview_approval`. Checks are status, own
+  award, and wallet present. It costs two queries no matter how many awards are involved. The
+  bulk UI previews with it and commits with it, so the summary a mod confirms is computed with
+  the same rules as the commit. The commit re-plans inside its own transaction, so an award
+  approved by someone else in between is skipped, with a reason, not approved twice.
+- **Reminders are claimed, not just sent.** `claim_wallet_reminders` stamps
+  `last_wallet_reminder_at` in the same transaction that selects who to remind. Two mods
+  clicking at once, or a roll call closing at the same time, can't double-DM anyone.
+- **Opt-out applies to all ZeeGoblin DMs**, including payment notices. Members still see
+  everything in `/profile` and `/tip history`.
+- **The `/report tips` window uses the service clock** (`TipService.report(window=…)`), so it
+  can be tested and stays consistent with stored timestamps.
+- **Migration style:** native `ALTER TABLE` for `users` (see `CLAUDE.md`). Triggers in `0003`
+  are idempotent (`IF NOT EXISTS` / `IF EXISTS`).

@@ -28,7 +28,13 @@ payout tracking. Python 3.12, discord.py 2, SQLAlchemy 2 (async) on SQLite, Alem
 - `database/models.py`: the ORM, CHECK constraints, and partial unique indexes. `SQLITE_TRIGGERS`
   holds the append-only and immutability guards.
 - `database/migrations/versions/`: Alembic. Schema changes need a **new** migration file. Never
-  edit `0001`. Keep migrations self-contained (no imports from `database.models`).
+  edit an existing one. Keep migrations self-contained (no imports from `database.models`).
+  Don't use `batch_alter_table` on tables that other tables reference (e.g. `users`): batch
+  mode rebuilds the table and SQLite refuses to drop it while foreign keys point at it. Use
+  native `op.add_column` / `ALTER TABLE ... DROP COLUMN` (see `0002`). Test migrations on a
+  *populated* database.
+- Member DMs go through `bot.dm_members`, which honours `users.dm_opt_out`. Missing-wallet
+  reminders must be claimed via `NotificationService.claim_wallet_reminders` (24 h cooldown).
 - `integrations/`: Phase 2 interfaces (Kick, Solana RPC). They must stay honest about being
   unavailable.
 

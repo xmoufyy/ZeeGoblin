@@ -190,7 +190,12 @@ Tokens are redacted.
 - Foreign keys, WAL mode, and a 10-second busy timeout are enabled on every connection.
 - The schema is managed by **Alembic** (`database/migrations`). `python main.py` runs
   `upgrade head` automatically and backs up the old file to `data\backups\` before migrating.
-  To migrate manually:
+  Current migrations:
+  - `0001`: schema.
+  - `0002`: member DM opt-out and wallet-reminder cooldown.
+  - `0003`: extra integrity triggers.
+
+  All are additive. To migrate manually:
 
 ```powershell
 python -m alembic upgrade head
@@ -266,9 +271,11 @@ All replies are private (ephemeral) unless noted.
 | `/wallet view` | Your address, when you registered it, and recent changes |
 | `/wallet remove` | Remove it (with confirmation) |
 | `/profile` | Totals earned, pending, approved, queued, submitted, paid, and disputed, plus how many roll calls you've joined |
-| `/tip history` | Every award you've received, with its status and payment transaction |
-| `/tip view award_id:` | Details of one of your awards |
+| `/tip history` | Every tip you've earned: date, amount, reason, what its status means (e.g. "register a wallet to claim this", "payment sent, waiting for staff confirmation") and a Solscan link once paid |
+| `/tip view award_id:` | Details of one of your awards. Staff also get **✅ Approve**, **🚫 Void**, **⚠️ Flag** and **📜 Member's tips** buttons when their role and the award's status allow. |
 | **I'M HERE!** button | Check in to a roll call |
+| `/notifications dms:` | `off` stops all ZeeGoblin DMs (payment notices, wallet reminders); `on` turns them back on |
+| `/help` | Menu of what ZeeGoblin can do. Staff tools are only listed for staff. |
 
 **Roll calls**
 
@@ -283,7 +290,7 @@ All replies are private (ephemeral) unless noted.
 
 | Command | Who | What it does |
 |---|---|---|
-| `/tip list status: event_id: page:` | Staff | Browse awards. Defaults to pending review. Each award shows its wallet: 🔒 the locked payout wallet, or 👛 the member's current wallet before approval. **📋 Copy wallets** privately sends that page's addresses as plain text, one per line, in list order (long-press → Copy Text). Head mods viewing pending awards also get **✅ Approve selected awards…** (pick from a menu) and **✅ Approve all on page**. Your own awards are never offered. |
+| `/tip list status: event_id: page:` | Staff | Browse awards, newest first, with ⏳ how long each has waited. Each award shows its wallet: 🔒 the locked payout wallet, or 👛 the member's current wallet before approval. **📋 Copy wallets** sends the page's addresses as plain text. Head mods viewing pending awards pick awards (or **Approve all on page**), see a summary with the total SOL and anything that will be skipped, then confirm. On `status:awaiting wallet`, **📨 Remind missing wallets** DMs those members (once per 24 h each, never if they opted out). |
 | `/tip add user: amount: reason:` | Mod+ | Request a manual award, which goes to review |
 | `/tip approve award_id:` | Head Mod+ | Approve one award. The ID field autocompletes. |
 | `/tip approve-event event_id:` | Head Mod+ | Approve every pending award from a roll call |
@@ -317,6 +324,7 @@ All replies are private (ephemeral) unless noted.
 | Command | Who | What it does |
 |---|---|---|
 | `/staff` | Any staff | Overview of everything waiting, with one-click buttons. **🔄 Refresh** updates it. |
+| `/report tips period: event_id:` | Any staff | End-of-stream summary: awards created in the period (default last 12 h) or one roll call, SOL awarded, where those awards are now, payments confirmed, and total outstanding SOL |
 
 **Fun** (public replies, nothing to do with SOL)
 
