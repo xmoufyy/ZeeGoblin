@@ -256,7 +256,9 @@ def test_custom_status_activity() -> None:
     assert isinstance(activity, discord.CustomActivity) and activity.name == "🎰 Gamble on Solpump"
 
 
-async def test_tip_list_approve_buttons(bot: ZeeGoblinBot, services: Services) -> None:
+async def test_tip_list_approve_buttons(
+    bot: ZeeGoblinBot, services: Services, monkeypatch: pytest.MonkeyPatch
+) -> None:
     head_mod_id, head_mod_role = 2000, 2  # role ID 2 = HEAD_MOD_ROLE_ID in the bot fixture
     for discord_id in (61, 62, head_mod_id):
         await services.wallets.set_wallet(member(discord_id), make_address(discord_id))
@@ -273,26 +275,45 @@ async def test_tip_list_approve_buttons(bot: ZeeGoblinBot, services: Services) -
         if row.discord_user_id != head_mod_id
     )
 
+    import bot.views.approval_view as approval_view
+
+    prompts: list[discord.Embed] = []
+    answer = {"confirm": False}
+
+    async def fake_confirm(interaction, embed, **kwargs):  # type: ignore[no-untyped-def]
+        prompts.append(embed)
+        return answer["confirm"]
+
+    monkeypatch.setattr(approval_view, "confirm", fake_confirm)
+    edits: list[object] = []
+
+    class FakeListMessage:
+        async def edit(self, **kwargs: object) -> None:
+            edits.append(kwargs)
+
+    view.message = FakeListMessage()  # type: ignore[assignment]
+    pending_before = await services.tips.list_awards(OWNER_ACTOR, status=AwardStatus.PENDING_REVIEW)
+
+    # 1. Summary first; cancelling approves nothing.
+    cancelled = fake_interaction(bot, head_mod_id, role_ids=(head_mod_role,))
+    await view.approve_page.callback(cancelled)
+    assert prompts[0].title == "Approve 2 award(s) · 0.02 SOL?"
+    after_cancel = await services.tips.list_awards(OWNER_ACTOR, status=AwardStatus.PENDING_REVIEW)
+    assert after_cancel.total == pending_before.total
+
+    # 2. Confirming approves exactly the summarised awards and refreshes the list.
+    answer["confirm"] = True
     click = fake_interaction(bot, head_mod_id, role_ids=(head_mod_role,))
     await view.approve_page.callback(click)
-    assert "Approved 2 award(s)" in click.response.messages[0]
+    assert "Approved **2** award(s)" in click.response.messages[0]
     remaining = await services.tips.list_awards(OWNER_ACTOR, status=AwardStatus.PENDING_REVIEW)
     assert [row.discord_user_id for row in remaining.items] == [head_mod_id]
-    assert view.picker not in view.children  # nothing left this user may approve
+    assert edits and view.picker not in view.children  # nothing left this user may approve
 
-    # A member who somehow clicks gets nothing approved: roles are re-checked per click.
-    await services.tips.add_manual(MOD, member(63), 10_000_000, "Call 63")
-    await services.wallets.set_wallet(member(63), make_address(63))
-    sneaky = fake_interaction(bot, head_mod_id)  # same user, head-mod role removed
-    summary = await view._approve(
-        sneaky,
-        [
-            (await services.tips.list_awards(OWNER_ACTOR, status=AwardStatus.PENDING_REVIEW))
-            .items[0]
-            .id
-        ],
-    )
-    assert "Not approved" in summary
+    # 3. Roles are re-checked on every click: without the head-mod role, nothing happens.
+    sneaky = fake_interaction(bot, head_mod_id)
+    await view.approve_page.callback(sneaky)
+    assert "permission" in sneaky.response.messages[0].lower()
 
 
 HEAD_MOD_ROLE, PAYMENT_MOD_ROLE, MOD_ROLE = 2, 4, 3  # role IDs used by the bot fixture

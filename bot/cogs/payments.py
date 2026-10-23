@@ -38,9 +38,12 @@ class BatchCog(commands.GroupCog, group_name="batch", group_description="Payment
 
         async def render(number: int) -> tuple[discord.Embed, int]:
             result = await payments.list_batches(actor, page=number)
+            progress = await payments.batch_progress(actor, [b.id for b in result.items])
             lines = [
-                f"**#{b.id}** · {b.status} · {b.award_count} award(s) · {sol(b.total_lamports)} · "
-                f"{ts(b.created_at, 'd')} by <@{b.created_by_discord_id}>"
+                f"**#{b.id}** · {b.status} · {sol(b.total_lamports)} · "
+                f"💰 {progress[b.id][0]}/{b.award_count} paid"
+                + (f" · {sol(progress[b.id][1])} left" if progress[b.id][1] else "")
+                + f" · {ts(b.created_at, 'd')} by <@{b.created_by_discord_id}>"
                 for b in result.items
             ] or ["No batches yet."]
             embed = goblin_embed("📦 Payment batches", "\n".join(lines), colour=GOLD)

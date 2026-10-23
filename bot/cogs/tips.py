@@ -22,12 +22,13 @@ from bot.branding import (
 from bot.events import guarded
 from bot.helpers import actor_of, bot_of, defer, identity_of, reply
 from bot.views.approval_view import ApprovalQueueView
+from bot.views.award_view import AwardActionsView
 from bot.views.batch_view import batch_files, batch_summary_embed
 from bot.views.confirmation_view import confirm, send_paginated
 from bot.views.payment_view import batch_pay_view
 from config.permissions import Permission, require
 from database.models import AwardStatus, DisputeResolution
-from services.errors import InputError, NotFound, ZeeGoblinError
+from services.errors import InputError, NotFound
 from services.tip_service import AwardRow
 from utils.currency import parse_sol
 
@@ -44,13 +45,41 @@ def wallet_text(row: AwardRow) -> str:
     return "👛 *no wallet registered*"
 
 
+WAITING_STATUSES = (AwardStatus.PENDING_REVIEW, AwardStatus.AWAITING_WALLET)
+
+
 def award_line(row: AwardRow, *, show_user: bool = True, show_wallet: bool = False) -> str:
     who = f"<@{row.discord_user_id}> · " if show_user else ""
     line = (
         f"**#{row.id}** · {who}{sol(row.amount_lamports)} · {row.reason[:60]} · "
         f"{status_text(row.status)}"
     )
+    if row.status in WAITING_STATUSES:
+        line += f" · ⏳ {ts(row.created_at, 'R')}"  # how long it's been waiting on staff/member
     return f"{line}\n  ↳ {wallet_text(row)}" if show_wallet else line
+
+
+# What each status means for the member, shown in their own /tip history.
+MEMBER_HINTS = {
+    AwardStatus.AWAITING_WALLET: "register a wallet with `/wallet set` to claim this",
+    AwardStatus.PENDING_REVIEW: "waiting for staff review",
+    AwardStatus.APPROVED: "approved, waiting for the next payout batch",
+    AwardStatus.QUEUED: "in a payout batch, payment coming",
+    AwardStatus.PAYMENT_SUBMITTED: "payment sent, waiting for staff confirmation",
+    AwardStatus.PAID: "paid (manually confirmed by staff)",
+    AwardStatus.DISPUTED: "under review by staff",
+    AwardStatus.VOIDED: "cancelled",
+}
+
+
+def member_history_line(row: AwardRow) -> str:
+    line = (
+        f"{ts(row.created_at, 'd')} · **{sol(row.amount_lamports)}** · {row.reason[:60]}\n"
+        f"  ↳ {status_text(row.status)}: {MEMBER_HINTS.get(AwardStatus(row.status), '')}"
+    )
+    if row.payment_signature:
+        line += f" · {tx_link(row.payment_signature)}"
+    return line
 
 
 def award_embed(row: AwardRow, title: str | None = None) -> discord.Embed:
@@ -224,26 +253,6 @@ class TipCog(commands.GroupCog, group_name="tip", group_description="The Dude-Mu
                 return list(shown)
             return [row for row in shown if row.discord_user_id != actor.discord_id]
 
-        async def approve_ids(click: discord.Interaction, award_ids: list[int]) -> str:
-            clicker = actor_of(click)  # roles are re-checked on every click
-            approved: list[AwardRow] = []
-            failed: list[str] = []
-            for award_id in award_ids:
-                try:
-                    approved.append(await self.services.tips.approve(clicker, award_id))
-                except ZeeGoblinError as exc:
-                    failed.append(f"#{award_id}: {exc}")
-            lines = []
-            if approved:
-                total = sum(row.amount_lamports for row in approved)
-                lines.append(
-                    f"{Quips.APPROVED}\nApproved {len(approved)} award(s) totalling "
-                    f"{sol(total)}: " + ", ".join(f"#{row.id}" for row in approved)
-                )
-            if failed:
-                lines.append("Not approved:\n" + "\n".join(failed))
-            return "\n\n".join(lines)
-
         first_embed, pages = await render(max(1, page))
         view = ApprovalQueueView(
             interaction.user.id,
@@ -251,7 +260,6 @@ class TipCog(commands.GroupCog, group_name="tip", group_description="The Dude-Mu
             max(1, min(page, pages)),
             pages,
             current_rows=approvable,
-            approve=approve_ids,
             copy_text=copy_wallets,
             copy_label="📋 Copy wallets",
         )
@@ -261,8 +269,16 @@ class TipCog(commands.GroupCog, group_name="tip", group_description="The Dude-Mu
     @app_commands.checks.cooldown(5, 30)
     async def view(self, interaction: discord.Interaction, award_id: int) -> None:
         await defer(interaction)
-        row = await self.services.tips.get(actor_of(interaction), award_id)
-        await reply(interaction, embed=award_embed(row))
+        actor = actor_of(interaction)
+        row = await self.services.tips.get(actor, award_id)
+        view = AwardActionsView(
+            interaction.user.id,
+            row,
+            actor,
+            embed_for=award_embed,
+            show_history=lambda i, discord_id: self.send_history(i, discord_id, page=1),
+        )
+        await reply(interaction, embed=award_embed(row), view=view if view.children else None)
 
     @app_commands.command(name="history", description="Tip history for you or a member")
     @app_commands.checks.cooldown(5, 30)
@@ -270,24 +286,27 @@ class TipCog(commands.GroupCog, group_name="tip", group_description="The Dude-Mu
     async def history(
         self, interaction: discord.Interaction, user: discord.Member | None = None, page: int = 1
     ) -> None:
+        await self.send_history(interaction, (user or interaction.user).id, page=page)
+
+    async def send_history(
+        self, interaction: discord.Interaction, discord_user_id: int, *, page: int
+    ) -> None:
         actor = actor_of(interaction)
-        target = user or interaction.user
-        if target.id != actor.discord_id:
+        if discord_user_id != actor.discord_id:
             require(actor, Permission.TIP_HISTORY_ANY)
         await defer(interaction)
+        whose = "Your tips" if discord_user_id == actor.discord_id else "Tips"
 
         async def render(number: int) -> tuple[discord.Embed, int]:
             result = await self.services.tips.list_awards(
-                actor, discord_user_id=target.id, page=number, page_size=10
+                actor, discord_user_id=discord_user_id, page=number, page_size=10
             )
-            lines = [
-                award_line(row, show_user=False)
-                + (f"\n  ↳ {tx_link(row.payment_signature)}" if row.payment_signature else "")
-                for row in result.items
-            ] or ["No awards yet."]
-            embed = goblin_embed(
-                f"📜 Tips for {target.display_name}", "\n".join(lines), colour=PURPLE
-            )
+            lines = [member_history_line(row) for row in result.items] or [
+                "No awards yet. Show up to Zee's next roll call! 👑"
+            ]
+            embed = goblin_embed(f"📜 {whose}", "\n".join(lines), colour=PURPLE)
+            if discord_user_id != actor.discord_id:
+                embed.description = f"<@{discord_user_id}>\n\n" + (embed.description or "")
             embed.set_footer(text=f"Page {result.page}/{result.pages} • {result.total} awards")
             return embed, result.pages
 

@@ -8,7 +8,7 @@ confirmed" is never presented as blockchain-verified.
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from sqlalchemy import func, select
@@ -86,6 +86,39 @@ class BatchDetail:
         for line in self.lines:
             counts[line.status] += 1
         return dict(counts)
+
+    @property
+    def progress(self) -> BatchProgress:
+        done_wallets = {
+            wallet.wallet
+            for wallet in self.wallets
+            if all(
+                line.status in SETTLED_STATUSES
+                for line in self.lines
+                if line.wallet == wallet.wallet
+            )
+        }
+        return BatchProgress(
+            paid_awards=sum(1 for line in self.lines if line.status == AwardStatus.PAID),
+            total_awards=len(self.lines),
+            remaining_lamports=sum(
+                line.amount_lamports for line in self.lines if line.status in OUTSTANDING_STATUSES
+            ),
+            wallets_done=done_wallets,
+        )
+
+
+# Awards in a batch that still need money to move (or a dispute resolved).
+OUTSTANDING_STATUSES = (AwardStatus.QUEUED, AwardStatus.PAYMENT_SUBMITTED, AwardStatus.DISPUTED)
+SETTLED_STATUSES = (AwardStatus.PAID, AwardStatus.VOIDED)
+
+
+@dataclass(frozen=True)
+class BatchProgress:
+    paid_awards: int
+    total_awards: int
+    remaining_lamports: int
+    wallets_done: set[str] = field(default_factory=set)
 
 
 @dataclass(frozen=True)
@@ -263,6 +296,34 @@ class PaymentService:
                 .offset((page - 1) * page_size)
             )
             return Page(list(rows), page, page_size, int(total or 0))
+
+    async def batch_progress(
+        self, actor: Actor, batch_ids: list[int]
+    ) -> dict[int, tuple[int, int]]:
+        """batch_id -> (paid award count, lamports still outstanding), in one query."""
+        require(actor, Permission.BATCH_VIEW)
+        if not batch_ids:
+            return {}
+        async with self._db.transaction() as session:
+            rows = await session.execute(
+                select(
+                    TipAward.batch_id,
+                    TipAward.status,
+                    func.sum(TipAward.amount_lamports),
+                    func.count(),
+                )
+                .where(TipAward.batch_id.in_(batch_ids))
+                .group_by(TipAward.batch_id, TipAward.status)
+            )
+            progress: dict[int, tuple[int, int]] = {batch_id: (0, 0) for batch_id in batch_ids}
+            for batch_id, status, lamports, count in rows:
+                paid, outstanding = progress[batch_id]
+                if status == AwardStatus.PAID:
+                    paid += int(count)
+                elif status in OUTSTANDING_STATUSES:
+                    outstanding += int(lamports or 0)
+                progress[batch_id] = (paid, outstanding)
+            return progress
 
     async def cancel_batch(self, actor: Actor, batch_id: int, reason: str) -> BatchCancellation:
         require(actor, Permission.BATCH_CANCEL)

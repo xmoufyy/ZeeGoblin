@@ -101,15 +101,29 @@ class RollCallCog(commands.GroupCog, group_name="rollcall", group_description="Z
             )
 
         limits = self.services.limits
+        reward_lamports = parse_sol(reward) if reward else limits.default_rollcall_reward
+        budget_lamports = parse_sol(budget_sol) if budget_sol else None
         await defer(interaction)
+        if reward_lamports > limits.default_rollcall_reward:
+            # A bigger-than-usual reward is often a typo (0.1 vs 0.01); check before pinging.
+            budget = budget_lamports or limits.max_rollcall_budget
+            prompt = goblin_embed(
+                "Bigger reward than usual - post it?",
+                f"**{sol(reward_lamports)}** per person (usual: "
+                f"{sol(limits.default_rollcall_reward)}). Up to **{sol(budget)}** total "
+                "could be owed if it fills up.",
+                colour=ORANGE,
+            )
+            if not await confirm(interaction, prompt, confirm_label="Start roll call"):
+                return
         event = await self.services.rollcalls.start(
             actor,
             guild_id=interaction.guild.id,
             channel_id=channel.id,
             duration_minutes=duration or limits.default_rollcall_duration_minutes,
-            reward_lamports=parse_sol(reward) if reward else limits.default_rollcall_reward,
+            reward_lamports=reward_lamports,
             max_participants=max_participants,
-            budget_lamports=parse_sol(budget_sol) if budget_sol else None,
+            budget_lamports=budget_lamports,
         )
         ping = self.bot.settings.rollcall_ping  # type: ignore[attr-defined]
         try:

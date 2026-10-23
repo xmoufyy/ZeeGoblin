@@ -20,8 +20,17 @@ def batch_summary_embed(detail: BatchDetail) -> discord.Embed:
         f"Created by <@{batch.created_by_discord_id}> {ts(batch.created_at, 'R')}",
         colour=GOLD,
     )
+    progress = detail.progress
+    embed.add_field(
+        name="Progress",
+        value=f"💰 {progress.paid_awards}/{progress.total_awards} awards paid · "
+        f"{len(progress.wallets_done)}/{len(detail.wallets)} wallets done · "
+        f"**{sol(progress.remaining_lamports)}** still to settle",
+        inline=False,
+    )
     lines = [
-        f"`{shorten_wallet(w.wallet)}` · {sol(w.lamports)} · {len(w.award_ids)} award(s)"
+        f"{'✅' if w.wallet in progress.wallets_done else '⬜'} `{shorten_wallet(w.wallet)}` · "
+        f"{', '.join(w.usernames)[:40]} · {sol(w.lamports)}"
         for w in detail.wallets[:15]
     ]
     if len(detail.wallets) > 15:
