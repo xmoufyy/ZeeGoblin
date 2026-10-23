@@ -44,6 +44,7 @@ EXPECTED_COMMANDS = {
     "batch": {"list", "view", "export", "cancel"},
     "payment": {"record", "confirm", "history"},
     "admin": {"audit", "presence", "whoami"},
+    "solpump": set(),
 }
 
 
@@ -209,3 +210,22 @@ async def test_embeds_fit_discord_limits(services: Services, clock) -> None:
     detail = await services.payments.create_batch(PAYMENT_MOD)
     embed = batch_summary_embed(detail)
     assert len(embed) < 6000 and all(len(f.value) <= 1024 for f in embed.fields)
+
+
+def test_solpump_promo_card(tmp_path) -> None:
+    from bot.cogs.promo import find_artwork, promo_embed, promo_view
+
+    assert find_artwork(tmp_path) is None
+    (tmp_path / "solpump.png").write_bytes(b"\x89PNG")
+    art = find_artwork(tmp_path)
+    assert art is not None and promo_embed(art).image.url == "attachment://solpump.png"
+    [button] = promo_view("https://solpump.io/a/ZEEDUDE").children
+    assert button.label == "Gamble On Solpump" and button.url == "https://solpump.io/a/ZEEDUDE"
+
+
+def test_custom_status_activity() -> None:
+    from bot.presence import build_activity
+    from config.settings import ActivityType
+
+    activity = build_activity(ActivityType.CUSTOM, "🎰 Gamble on Solpump")
+    assert isinstance(activity, discord.CustomActivity) and activity.name == "🎰 Gamble on Solpump"

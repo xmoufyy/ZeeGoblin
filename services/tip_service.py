@@ -24,6 +24,7 @@ from database.models import (
     PaymentBatch,
     TipAward,
     VerificationSource,
+    Wallet,
 )
 from database.session import Database
 from services.accounts import DiscordIdentity, active_wallet, ensure_user, find_user_id
@@ -55,6 +56,12 @@ class AwardRow:
     paid_at: datetime | None
     verification_source: str | None
     payment_signature: str | None
+    # The member's wallet right now. Payouts use payout_wallet (locked at approval) instead.
+    current_wallet: str | None = None
+
+    @property
+    def display_wallet(self) -> str | None:
+        return self.payout_wallet or self.current_wallet
 
 
 @dataclass(frozen=True)
@@ -98,12 +105,28 @@ def award_rows_query() -> Select:
         .correlate(TipAward)
         .scalar_subquery()
     )
+    current_wallet = (
+        select(Wallet.address)
+        .where(Wallet.user_id == TipAward.user_id, Wallet.is_active.is_(True))
+        .correlate(TipAward)
+        .scalar_subquery()
+    )
     return select(
-        TipAward, DiscordAccount.discord_user_id, DiscordAccount.username, signature
+        TipAward,
+        DiscordAccount.discord_user_id,
+        DiscordAccount.username,
+        signature,
+        current_wallet,
     ).join(DiscordAccount, DiscordAccount.user_id == TipAward.user_id)
 
 
-def to_row(award: TipAward, discord_id: int, username: str, signature: str | None) -> AwardRow:
+def to_row(
+    award: TipAward,
+    discord_id: int,
+    username: str,
+    signature: str | None,
+    current_wallet: str | None = None,
+) -> AwardRow:
     return AwardRow(
         id=award.id,
         status=award.status,
@@ -121,6 +144,7 @@ def to_row(award: TipAward, discord_id: int, username: str, signature: str | Non
         paid_at=award.paid_at,
         verification_source=award.verification_source,
         payment_signature=signature,
+        current_wallet=current_wallet,
     )
 
 

@@ -25,6 +25,7 @@ EXTENSIONS = (
     "bot.cogs.tips",
     "bot.cogs.payments",
     "bot.cogs.administration",
+    "bot.cogs.promo",
 )
 
 

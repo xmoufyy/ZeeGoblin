@@ -68,14 +68,40 @@ async def confirm(
 
 
 Renderer = Callable[[int], Awaitable[tuple[discord.Embed, int]]]
+# Returns plain text for a page (e.g. wallet addresses) sent privately for easy copying.
+CopyText = Callable[[int], Awaitable[str]]
 
 
 class Paginator(_OwnedView):
-    def __init__(self, owner_id: int, render: Renderer, page: int, pages: int) -> None:
+    def __init__(
+        self,
+        owner_id: int,
+        render: Renderer,
+        page: int,
+        pages: int,
+        *,
+        copy_text: CopyText | None = None,
+        copy_label: str = "📋 Copy",
+    ) -> None:
         super().__init__(owner_id, timeout=300)
         self.render = render
         self.page = page
         self.pages = pages
+        if pages <= 1:
+            self.remove_item(self.previous_button)
+            self.remove_item(self.next_button)
+        if copy_text is not None:
+            button: discord.ui.Button = discord.ui.Button(
+                label=copy_label, style=discord.ButtonStyle.primary
+            )
+
+            async def send_copy(interaction: discord.Interaction) -> None:
+                text = await copy_text(self.page)
+                # Plain text, no markdown: long-press / "Copy Text" copies exactly this.
+                await interaction.response.send_message(text[:2000], ephemeral=True)
+
+            button.callback = send_copy
+            self.add_item(button)
         self._sync_buttons()
 
     def _sync_buttons(self) -> None:
@@ -101,7 +127,18 @@ class Paginator(_OwnedView):
         await self._show(interaction, self.page + 1)
 
 
-async def send_paginated(interaction: discord.Interaction, render: Renderer, page: int = 1) -> None:
+async def send_paginated(
+    interaction: discord.Interaction,
+    render: Renderer,
+    page: int = 1,
+    *,
+    copy_text: CopyText | None = None,
+    copy_label: str = "📋 Copy",
+) -> None:
     embed, pages = await render(page)
-    view = Paginator(interaction.user.id, render, page, pages) if pages > 1 else None
+    view = None
+    if pages > 1 or copy_text is not None:
+        view = Paginator(
+            interaction.user.id, render, page, pages, copy_text=copy_text, copy_label=copy_label
+        )
     await reply(interaction, embed=embed, view=view)

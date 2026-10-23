@@ -21,12 +21,21 @@ STATUS_CHOICES = [
 ]
 
 
-def award_line(row: AwardRow, *, show_user: bool = True) -> str:
+def wallet_text(row: AwardRow) -> str:
+    if row.payout_wallet:
+        return f"🔒 `{row.payout_wallet}`"
+    if row.current_wallet:
+        return f"👛 `{row.current_wallet}`"
+    return "👛 *no wallet registered*"
+
+
+def award_line(row: AwardRow, *, show_user: bool = True, show_wallet: bool = False) -> str:
     who = f"<@{row.discord_user_id}> · " if show_user else ""
-    return (
+    line = (
         f"**#{row.id}** · {who}{sol(row.amount_lamports)} · {row.reason[:60]} · "
         f"{status_text(row.status)}"
     )
+    return f"{line}\n  ↳ {wallet_text(row)}" if show_wallet else line
 
 
 def award_embed(row: AwardRow, title: str | None = None) -> discord.Embed:
@@ -44,6 +53,12 @@ def award_embed(row: AwardRow, title: str | None = None) -> discord.Embed:
         )
     if row.payout_wallet:
         embed.add_field(name="Payout wallet (locked)", value=f"`{row.payout_wallet}`", inline=False)
+    elif row.current_wallet:
+        embed.add_field(
+            name="Current wallet (locks in on approval)",
+            value=f"`{row.current_wallet}`",
+            inline=False,
+        )
     if row.batch_id:
         embed.add_field(name="Batch", value=f"#{row.batch_id}")
     if row.payment_signature:
@@ -115,15 +130,26 @@ class TipCog(commands.GroupCog, group_name="tip", group_description="The Dude-Mu
                 actor, status=wanted, event_id=event_id, page=number, page_size=10
             )
             total = sum(row.amount_lamports for row in result.items)
-            lines = [award_line(row) for row in result.items] or ["Nothing here. 🧌"]
+            lines = [award_line(row, show_wallet=True) for row in result.items] or [
+                "Nothing here. 🧌"
+            ]
             embed = goblin_embed(f"{status_text(wanted)} awards", "\n".join(lines), colour=PURPLE)
             embed.set_footer(
                 text=f"Page {result.page}/{result.pages} • {result.total} awards • "
-                f"{sol(total)} on this page"
+                f"{sol(total)} on this page • 🔒 locked payout · 👛 current wallet"
             )
             return embed, result.pages
 
-        await send_paginated(interaction, render, max(1, page))
+        async def copy_wallets(number: int) -> str:
+            result = await self.services.tips.list_awards(
+                actor, status=wanted, event_id=event_id, page=number, page_size=10
+            )
+            wallets = [row.display_wallet for row in result.items if row.display_wallet]
+            return "\n".join(wallets) or "No wallets on this page."
+
+        await send_paginated(
+            interaction, render, max(1, page), copy_text=copy_wallets, copy_label="📋 Copy wallets"
+        )
 
     @app_commands.command(name="view", description="Details for one award")
     @app_commands.checks.cooldown(5, 30)

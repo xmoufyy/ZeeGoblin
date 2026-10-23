@@ -148,7 +148,8 @@ hiding is cosmetic, not the security boundary.
 | `REQUIRE_SEPARATE_PAYMENT_CONFIRMER` | | `true` requires a different staff member to confirm a payment than the one who recorded it (the owner is exempt) |
 | `ENABLE_MESSAGE_CHECKIN` | | `true` also accepts typed "present"/"here" messages. Needs the Message Content intent; if that intent is off, the bot logs a warning and runs with button check-ins only. |
 | `SYNC_COMMANDS_ON_STARTUP` | | Default `true` |
-| `BOT_ACTIVITY_TYPE` / `BOT_ACTIVITY_TEXT` | | Default `playing` / `Gambling on Solpump` |
+| `BOT_ACTIVITY_TYPE` / `BOT_ACTIVITY_TEXT` | | Default `playing` / `Gambling on Solpump`. `custom` shows the text alone, e.g. `🎰 Gamble on Solpump`. |
+| `SOLPUMP_URL` | | Link behind the **Gamble On Solpump** button on `/solpump` (default `https://solpump.io/a/ZEEDUDE`) |
 | `LOG_LEVEL` | | `INFO` (default), `DEBUG`, `WARNING`, … |
 
 Settings are validated at startup. A bad value makes the bot print exactly which variable is
@@ -271,7 +272,7 @@ All replies are private (ephemeral) unless noted.
 
 | Command | Who | What it does |
 |---|---|---|
-| `/tip list status: event_id: page:` | Staff | Browse awards. Defaults to pending review. |
+| `/tip list status: event_id: page:` | Staff | Browse awards. Defaults to pending review. Each award shows its wallet: 🔒 the locked payout wallet, or 👛 the member's current wallet before approval. **📋 Copy wallets** privately sends that page's addresses as plain text, one per line, in list order (long-press → Copy Text). |
 | `/tip add user: amount: reason:` | Mod+ | Request a manual award, which goes to review |
 | `/tip approve award_id:` | Head Mod+ | Approve one award. The ID field autocompletes. |
 | `/tip approve-event event_id:` | Head Mod+ | Approve every pending award from a roll call |
@@ -300,6 +301,17 @@ All replies are private (ephemeral) unless noted.
 | `/admin audit entity_type: entity_id: user:` | Head Mod+ | Browse the audit trail |
 | `/admin presence activity: text:` | Owner | Change "Playing Gambling on Solpump". The change persists across restarts. |
 | `/admin whoami` | Anyone | Your resolved roles and permissions |
+
+**Promo**
+
+| Command | Who | What it does |
+|---|---|---|
+| `/solpump` | Anyone (once per 2 min per channel) | Posts the Solpump card publicly: the artwork from `assets/solpump.png` and a **🎰 Gamble On Solpump** link button. It is separate from roll calls and tips, which never require gambling. |
+
+> **Why not a Rich Presence picture and button?** Discord only shows Rich Presence images and
+> buttons for *games* that use the Game SDK on a player's own PC. Bot accounts are limited to a
+> text status, so the uploads under Developer Portal → Rich Presence → Art Assets never appear
+> on a bot. `/solpump` puts the same picture and button in chat instead.
 
 ---
 

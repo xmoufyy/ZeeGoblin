@@ -25,6 +25,7 @@ class ActivityType(StrEnum):
     WATCHING = "watching"
     LISTENING = "listening"
     COMPETING = "competing"
+    CUSTOM = "custom"  # plain status text, no "Playing" prefix
 
 
 @dataclass(frozen=True)
@@ -105,6 +106,9 @@ class Settings(BaseSettings):
     bot_activity_type: ActivityType = ActivityType.PLAYING
     bot_activity_text: str = Field(default="Gambling on Solpump", min_length=1, max_length=128)
 
+    # /solpump promo card: link button target. Artwork is assets/solpump.(png|jpg|webp).
+    solpump_url: str = "https://solpump.io/a/ZEEDUDE"
+
     log_level: str = "INFO"
     data_dir: Path = PROJECT_ROOT / "data"
 
@@ -120,6 +124,13 @@ class Settings(BaseSettings):
     @classmethod
     def _blank_is_none(cls, value: object) -> object:
         return None if value in ("", "0", 0) else value
+
+    @field_validator("solpump_url")
+    @classmethod
+    def _https_url(cls, value: str) -> str:
+        if not value.startswith("https://"):
+            raise ValueError("SOLPUMP_URL must be an https:// link")
+        return value
 
     @field_validator("log_level")
     @classmethod

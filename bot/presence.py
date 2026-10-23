@@ -20,6 +20,8 @@ _DISCORD_TYPES = {
 def build_activity(kind: ActivityType, text: str) -> discord.BaseActivity:
     if kind == ActivityType.PLAYING:
         return discord.Game(name=text)
+    if kind == ActivityType.CUSTOM:
+        return discord.CustomActivity(name=text)
     return discord.Activity(type=_DISCORD_TYPES[kind], name=text)
 
 

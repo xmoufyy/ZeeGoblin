@@ -257,3 +257,16 @@ async def test_dispute_flow(services) -> None:
     assert row.status == AwardStatus.PENDING_REVIEW and row.payout_wallet is None
     with pytest.raises(Conflict):
         await services.tips.resolve_dispute(HEAD_MOD, dispute.id, DisputeResolution.VOIDED, "x")
+
+
+async def test_award_rows_show_current_then_locked_wallet(services) -> None:
+    await services.wallets.set_wallet(member(10), make_address(10))
+    award = await services.tips.add_manual(MOD, member(10), 1_000, "Show wallet")
+    pending = (await services.tips.list_awards(HEAD_MOD)).items[0]
+    assert pending.payout_wallet is None and pending.display_wallet == make_address(10)
+
+    await services.tips.approve(HEAD_MOD, award.id)
+    await services.wallets.set_wallet(member(10), make_address(11))
+    approved = await services.tips.get(HEAD_MOD, award.id)
+    assert approved.current_wallet == make_address(11)
+    assert approved.display_wallet == make_address(10)  # the locked payout wins
