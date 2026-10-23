@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from sqlalchemy import Select, func, select
@@ -27,9 +27,15 @@ from database.models import (
     Wallet,
 )
 from database.session import Database
-from services.accounts import DiscordIdentity, active_wallet, ensure_user, find_user_id
+from services.accounts import (
+    DiscordIdentity,
+    active_wallet,
+    active_wallets,
+    ensure_user,
+    find_user_id,
+)
 from services.audit_service import AuditAction, Page, record_audit
-from services.award_states import transition
+from services.award_states import label, transition
 from services.errors import Conflict, InputError, InvalidTransition, NotFound, PermissionDenied
 from utils.currency import format_sol
 from utils.timeutil import Clock, utcnow
@@ -70,6 +76,21 @@ class BulkApproval:
     total_lamports: int
     skipped_own: int
     skipped_no_wallet: int
+    # award_id -> why it wasn't approved (own award, no wallet, wrong status, missing).
+    skipped: dict[int, str] = field(default_factory=dict)
+    approved_ids: list[int] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ApprovalPlan:
+    """What a bulk approval *would* do right now. Nothing is changed."""
+
+    eligible: list[AwardRow]
+    skipped: dict[int, str]
+
+    @property
+    def total_lamports(self) -> int:
+        return sum(row.amount_lamports for row in self.eligible)
 
 
 @dataclass(frozen=True)
@@ -188,27 +209,80 @@ class TipService:
             raise NotFound(f"Award #{award_id} doesn't exist.")
         return row[0], row[1]
 
-    def _check_not_own(self, actor: Actor, recipient_discord_id: int, verb: str) -> None:
-        if recipient_discord_id == actor.discord_id and not actor.can(Permission.APPROVE_OWN_AWARD):
-            raise PermissionDenied(f"You can't {verb} your own award. Ask another staff member.")
-
-    async def _approve_in_session(
-        self, session: AsyncSession, actor: Actor, award: TipAward, now: datetime
+    @staticmethod
+    def _approve_in_session(
+        session: AsyncSession, actor: Actor, award: TipAward, wallet: str, now: datetime
     ) -> None:
-        wallet = await active_wallet(session, award.user_id)
-        if wallet is None:
-            raise InvalidTransition(f"Award #{award.id}'s recipient has no registered wallet.")
+        """Approve and lock in ``wallet`` (the recipient's active wallet, read in this tx)."""
         transition(
             session,
             award,
             AwardStatus.APPROVED,
             actor_id=actor.discord_id,
             action=AuditAction.AWARD_APPROVED,
-            details={"payout_wallet": wallet.address, "amount_lamports": award.amount_lamports},
+            details={"payout_wallet": wallet, "amount_lamports": award.amount_lamports},
         )
-        award.payout_wallet = wallet.address
+        award.payout_wallet = wallet
         award.approved_by_discord_id = actor.discord_id
         award.approved_at = now
+
+    async def _plan(
+        self, session: AsyncSession, actor: Actor, award_ids: list[int]
+    ) -> tuple[list[tuple[TipAward, str, AwardRow]], dict[int, str]]:
+        """Split awards into (award, wallet, row) that can be approved now and skip reasons.
+
+        Two queries regardless of how many awards are involved.
+        """
+        rows = {
+            row[0].id: row
+            for row in await session.execute(award_rows_query().where(TipAward.id.in_(award_ids)))
+        }
+        wallets = await active_wallets(session, [row[0].user_id for row in rows.values()])
+        eligible, skipped = [], {}
+        for award_id in award_ids:
+            row = rows.get(award_id)
+            if row is None:
+                skipped[award_id] = "doesn't exist"
+                continue
+            award, discord_id = row[0], row[1]
+            if award.status != AwardStatus.PENDING_REVIEW:
+                skipped[award_id] = f"is {label(award.status)}"
+            elif discord_id == actor.discord_id and not actor.can(Permission.APPROVE_OWN_AWARD):
+                skipped[award_id] = "is your own award"
+            elif award.user_id not in wallets:
+                skipped[award_id] = "recipient has no wallet"
+            else:
+                eligible.append((award, wallets[award.user_id], to_row(*row)))
+        return eligible, skipped
+
+    async def preview_approval(self, actor: Actor, award_ids: list[int]) -> ApprovalPlan:
+        require(actor, Permission.AWARD_APPROVE)
+        async with self._db.transaction() as session:
+            eligible, skipped = await self._plan(session, actor, award_ids)
+            return ApprovalPlan([row for _, _, row in eligible], skipped)
+
+    async def approve_many(self, actor: Actor, award_ids: list[int]) -> BulkApproval:
+        """Approve several awards in one transaction; ineligible ones are skipped with a reason."""
+        require(actor, Permission.AWARD_APPROVE)
+        if not award_ids:
+            raise InputError("Pick at least one award to approve.")
+        if len(award_ids) > 100:
+            raise InputError("Approve at most 100 awards at a time.")
+        now = self._clock()
+        async with self._db.transaction() as session:
+            eligible, skipped = await self._plan(session, actor, award_ids)
+            for award, wallet, _ in eligible:
+                self._approve_in_session(session, actor, award, wallet, now)
+            return BulkApproval(
+                approved=len(eligible),
+                total_lamports=sum(award.amount_lamports for award, _, _ in eligible),
+                skipped_own=sum(1 for r in skipped.values() if r == "is your own award"),
+                skipped_no_wallet=sum(
+                    1 for r in skipped.values() if r == "recipient has no wallet"
+                ),
+                skipped=skipped,
+                approved_ids=[award.id for award, _, _ in eligible],
+            )
 
     # ------------------------------------------------------------------ creation
 
@@ -280,38 +354,47 @@ class TipService:
         require(actor, Permission.AWARD_APPROVE)
         now = self._clock()
         async with self._db.transaction() as session:
-            award, discord_id = await self._load(session, award_id)
-            self._check_not_own(actor, discord_id, "approve")
-            await self._approve_in_session(session, actor, award, now)
+            eligible, skipped = await self._plan(session, actor, [award_id])
+            if award_id in skipped:
+                reason = skipped[award_id]
+                if reason == "doesn't exist":
+                    raise NotFound(f"Award #{award_id} doesn't exist.")
+                if reason == "is your own award":
+                    raise PermissionDenied(
+                        "You can't approve your own award. Ask another staff member."
+                    )
+                raise InvalidTransition(f"Award #{award_id} can't be approved: it {reason}.")
+            [(award, wallet, _)] = eligible
+            self._approve_in_session(session, actor, award, wallet, now)
             return await self._row(session, award.id)
 
     async def approve_event(self, actor: Actor, event_id: int) -> BulkApproval:
         require(actor, Permission.AWARD_APPROVE)
         now = self._clock()
         async with self._db.transaction() as session:
-            rows = (
-                await session.execute(
-                    select(TipAward, DiscordAccount.discord_user_id)
-                    .join(DiscordAccount, DiscordAccount.user_id == TipAward.user_id)
+            award_ids = list(
+                await session.scalars(
+                    select(TipAward.id)
                     .where(
                         TipAward.event_id == event_id,
                         TipAward.status == AwardStatus.PENDING_REVIEW,
                     )
                     .order_by(TipAward.id)
                 )
-            ).all()
-            approved = total = skipped_own = skipped_wallet = 0
-            for award, discord_id in rows:
-                if discord_id == actor.discord_id and not actor.can(Permission.APPROVE_OWN_AWARD):
-                    skipped_own += 1
-                    continue
-                if await active_wallet(session, award.user_id) is None:
-                    skipped_wallet += 1
-                    continue
-                await self._approve_in_session(session, actor, award, now)
-                approved += 1
-                total += award.amount_lamports
-            return BulkApproval(approved, total, skipped_own, skipped_wallet)
+            )
+            eligible, skipped = await self._plan(session, actor, award_ids)
+            for award, wallet, _ in eligible:
+                self._approve_in_session(session, actor, award, wallet, now)
+            return BulkApproval(
+                approved=len(eligible),
+                total_lamports=sum(award.amount_lamports for award, _, _ in eligible),
+                skipped_own=sum(1 for r in skipped.values() if r == "is your own award"),
+                skipped_no_wallet=sum(
+                    1 for r in skipped.values() if r == "recipient has no wallet"
+                ),
+                skipped=skipped,
+                approved_ids=[award.id for award, _, _ in eligible],
+            )
 
     async def void(self, actor: Actor, award_id: int, reason: str) -> AwardRow:
         require(actor, Permission.AWARD_VOID)
@@ -333,6 +416,9 @@ class TipService:
             await self._close_open_dispute(
                 session, award.id, actor, DisputeResolution.VOIDED, reason, now
             )
+            # A voided award no longer blocks its batch (e.g. the last disputed award in it).
+            if award.batch_id is not None:
+                await maybe_complete_batch(session, award.batch_id, now)
             return await self._row(session, award.id)
 
     async def return_to_review(self, actor: Actor, award_id: int, reason: str) -> AwardRow:

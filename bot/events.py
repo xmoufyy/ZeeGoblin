@@ -7,6 +7,7 @@ from collections.abc import Awaitable
 
 import discord
 from discord import app_commands
+from sqlalchemy.exc import OperationalError
 
 from bot.branding import RED, Quips, goblin_embed
 from services.errors import PermissionDenied, ZeeGoblinError
@@ -24,6 +25,13 @@ def user_message(error: BaseException) -> str | None:
         return f"{Quips.NO_PERMISSION}\n-# {error}"
     if isinstance(error, USER_ERRORS):
         return str(error)
+    if isinstance(error, OperationalError) and "locked" in str(error).lower():
+        # Another program (a DB browser, a backup) held the database past the busy timeout.
+        # The transaction rolled back, so nothing was half-saved.
+        return (
+            "⏳ ZeeGoblin's database is busy right now, so nothing was changed. "
+            "Try again in a few seconds."
+        )
     return None
 
 

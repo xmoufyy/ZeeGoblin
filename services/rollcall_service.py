@@ -119,6 +119,9 @@ class RollCallService:
         if budget < reward_lamports:
             raise InputError("Budget must cover at least one reward.")
 
+        # A roll call whose deadline just passed may not be finalized yet (the scheduler runs
+        # every few seconds). Close it now rather than refusing the new one.
+        await self.finalize_due()
         now = self._clock()
         async with self._db.transaction() as session:
             existing = await session.scalar(

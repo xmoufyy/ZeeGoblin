@@ -37,7 +37,9 @@ class ZeeTree(app_commands.CommandTree):
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         client = interaction.client
         if interaction.guild_id != client.settings.discord_guild_id:  # type: ignore[attr-defined]
-            await send_error(interaction, "ZeeGoblin only works inside the Dude-Munity server.")
+            # Autocomplete requests can't carry a message; just return no suggestions.
+            if interaction.type != discord.InteractionType.autocomplete:
+                await send_error(interaction, "ZeeGoblin only works inside the Dude-Munity server.")
             return False
         return True
 
