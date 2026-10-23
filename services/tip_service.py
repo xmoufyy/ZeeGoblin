@@ -534,6 +534,14 @@ class TipService:
             reason=note,
         )
 
+    async def get_dispute(self, actor: Actor, dispute_id: int) -> Dispute:
+        require(actor, Permission.AWARD_VIEW_QUEUE)
+        async with self._db.transaction() as session:
+            dispute = await session.get(Dispute, dispute_id)
+            if dispute is None:
+                raise NotFound(f"Dispute #{dispute_id} doesn't exist.")
+            return dispute
+
     async def list_disputes(
         self, actor: Actor, *, open_only: bool = True, page: int = 1, page_size: int = 10
     ) -> Page[Dispute]:

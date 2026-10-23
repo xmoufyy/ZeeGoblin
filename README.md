@@ -149,6 +149,7 @@ hiding is cosmetic, not the security boundary.
 | `REQUIRE_SEPARATE_PAYMENT_CONFIRMER` | | `true` requires a different staff member to confirm a payment than the one who recorded it (the owner is exempt) |
 | `ENABLE_MESSAGE_CHECKIN` | | `true` also accepts typed "present"/"here" messages. Needs the Message Content intent; if that intent is off, the bot logs a warning and runs with button check-ins only. |
 | `ROLLCALL_PING` | | Who the roll-call announcement pings: `@everyone` (default), `@here`, or empty for no ping |
+| `MEMBER_DMS` | | `true` (default): ZeeGoblin DMs members when they get paid (with a Solscan link), and DMs roll-call participants who still need to register a wallet. Members with DMs closed are skipped. |
 | `SYNC_COMMANDS_ON_STARTUP` | | Default `true` |
 | `BOT_ACTIVITY_TYPE` / `BOT_ACTIVITY_TEXT` | | Default `playing` / `Gambling on Solpump`. `custom` shows the text alone, e.g. `🎰 Gamble on Solpump`. |
 | `SOLPUMP_URL` | | Link behind the **Gamble On Solpump** button on `/solpump` (default `https://solpump.io/a/ZEEDUDE`) |
@@ -266,7 +267,6 @@ All replies are private (ephemeral) unless noted.
 | `/wallet remove` | Remove it (with confirmation) |
 | `/profile` | Totals earned, pending, approved, queued, submitted, paid, and disputed, plus how many roll calls you've joined |
 | `/tip history` | Every award you've received, with its status and payment transaction |
-| `/tip status` | Your totals. Staff see the whole ledger. |
 | `/tip view award_id:` | Details of one of your awards |
 | **I'M HERE!** button | Check in to a roll call |
 
@@ -298,8 +298,7 @@ All replies are private (ephemeral) unless noted.
 
 | Command | Who | What it does |
 |---|---|---|
-| `/batch list` / `/batch view batch_id:` | Payment Mod, Head Mod | Batches and their progress |
-| `/batch export batch_id:` | Payment Mod | Re-download a batch's CSVs |
+| `/batch list` / `/batch view batch_id:` | Payment Mod, Head Mod | Batches and their progress. Under `/batch view`: **📄 Download CSVs**, **💸 Record a payment you sent…** and **✅ Confirm a recorded payment…** |
 | `/batch cancel batch_id: reason:` | Payment Mod | Release unpaid awards back to approved |
 | `/payment record batch_id: wallet: amount: signature: award_ids: flag_mismatch: note:` | Payment Mod | Record a transfer you already sent |
 | `/payment confirm payment_id: note:` | Payment Mod | Confirm the transfer happened, which marks its awards paid |

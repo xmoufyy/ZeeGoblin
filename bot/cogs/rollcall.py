@@ -7,6 +7,7 @@ announcement, notifying staff) are tracked in the database and retried until don
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 
@@ -42,6 +43,8 @@ class RollCallCog(commands.GroupCog, group_name="rollcall", group_description="Z
         self._shown_counts: dict[int, int] = {}
         self._last_edit: dict[int, float] = {}
         self._tick = 0
+        # Serializes closure publishing so /rollcall end and the scheduler can't both post.
+        self._publish_lock = asyncio.Lock()
 
     async def cog_load(self) -> None:
         self.scheduler.start()
@@ -85,6 +88,10 @@ class RollCallCog(commands.GroupCog, group_name="rollcall", group_description="Z
                 ("View Channel", perms.view_channel),
                 ("Send Messages", perms.send_messages),
                 ("Embed Links", perms.embed_links),
+                (
+                    "Send Messages in Threads",
+                    perms.send_messages_in_threads or not isinstance(channel, discord.Thread),
+                ),
             )
             if not ok
         ]
@@ -198,7 +205,11 @@ class RollCallCog(commands.GroupCog, group_name="rollcall", group_description="Z
         result = await self.services.rollcalls.end(actor, event_id, award=not cancel)
         if not result.already_finalized:
             await self.publish_closure(result.event, result)
-        await reply(interaction, embed=self._summary_embed(result.event, result))
+        await reply(
+            interaction,
+            embed=self._summary_embed(result.event, result),
+            view=approve_event_view(result.event),
+        )
 
     @app_commands.command(name="history", description="Recent roll calls")
     async def history(self, interaction: discord.Interaction, page: int = 1) -> None:
@@ -302,6 +313,26 @@ class RollCallCog(commands.GroupCog, group_name="rollcall", group_description="Z
         """Edit the announcement and notify staff; each step is recorded once it succeeds."""
         self._shown_counts.pop(event.id, None)
         self._last_edit.pop(event.id, None)
+        if result is not None and not result.already_finalized:
+            self._remind_missing_wallets(event, result.awaiting_wallet_discord_ids)
+        async with self._publish_lock:
+            # Re-read: another caller may have finished these steps while we waited.
+            fresh = await self.services.rollcalls.get(event.id)
+            if fresh is not None:
+                await self._publish_steps(fresh, result)
+
+    def _remind_missing_wallets(self, event: Event, discord_ids: list[int]) -> None:
+        embed = goblin_embed(
+            "👛 You've got SOL waiting!",
+            f"You checked in to Zee's roll call #{event.id} and earned "
+            f"**{sol(event.reward_lamports)}**, but you haven't registered a wallet.\n\n"
+            "Run `/wallet set` in the Dude-Munity server with your **public** SOL address so "
+            "staff can review it. Never share your seed phrase or private key.",
+            colour=ORANGE,
+        )
+        self.bot.dm_members(dict.fromkeys(discord_ids, embed))  # type: ignore[attr-defined]
+
+    async def _publish_steps(self, event: Event, result: FinalizeResult | None) -> None:
         if not event.announcement_synced:
             done = True
             if event.message_id:
@@ -359,8 +390,9 @@ class RollCallCog(commands.GroupCog, group_name="rollcall", group_description="Z
         if not cancelled and event.award_count:
             embed.add_field(
                 name="Next step",
-                value="Click **Approve all** below (head mods), or review one by one with "
-                "`/tip list`. Members without a wallet are approved once they add one.",
+                value="Head mods: click **Approve all** below, or review one by one with "
+                "`/tip list`. Members without a wallet were DM'd a reminder; their awards move "
+                "to pending review when they add one.",
                 inline=False,
             )
         return embed

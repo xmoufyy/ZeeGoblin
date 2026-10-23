@@ -55,7 +55,10 @@ async def reply(
     if files:
         kwargs["files"] = files
     if interaction.response.is_done():
-        return await interaction.followup.send(wait=True, **kwargs)
+        message = await interaction.followup.send(wait=True, **kwargs)
+        if view is not None and hasattr(view, "message"):
+            view.message = message  # lets the view tidy itself up when it times out
+        return message
     await interaction.response.send_message(**kwargs)
     return None
 

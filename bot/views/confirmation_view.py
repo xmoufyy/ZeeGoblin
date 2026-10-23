@@ -14,6 +14,13 @@ class OwnedView(discord.ui.View):
     def __init__(self, owner_id: int, *, timeout: float) -> None:
         super().__init__(timeout=timeout)
         self.owner_id = owner_id
+        # Set by bot.helpers.reply so expired controls can be removed instead of failing.
+        self.message: discord.WebhookMessage | None = None
+
+    async def on_timeout(self) -> None:
+        if self.message is not None:
+            with contextlib.suppress(discord.HTTPException):
+                await self.message.edit(view=None)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner_id:

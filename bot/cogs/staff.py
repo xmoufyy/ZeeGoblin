@@ -49,6 +49,17 @@ async def build_dashboard(
         name="✅ Approved, unbatched", value=f"**{approved.count}** · {sol(approved.lamports)}"
     )
     embed.add_field(name="⚠️ Open disputes", value=f"**{ledger.open_disputes}**")
+    queued, submitted, paid = (
+        totals[AwardStatus.QUEUED],
+        totals[AwardStatus.PAYMENT_SUBMITTED],
+        totals[AwardStatus.PAID],
+    )
+    embed.add_field(
+        name="🏦 Ledger",
+        value=f"📦 In batches {sol(queued.lamports)} · 📨 Sent, unconfirmed "
+        f"{sol(submitted.lamports)} · 💰 Paid all-time {sol(paid.lamports)}",
+        inline=False,
+    )
 
     tips = bot.get_cog("TipCog")
     disputes = bot.get_cog("DisputeCog")
@@ -104,7 +115,9 @@ async def build_dashboard(
         for batch in open_batches.items:
             buttons.append(
                 (
-                    f"💸 Pay batch #{batch.id}",
+                    f"💸 Pay batch #{batch.id}"
+                    if actor.can(Permission.PAYMENT_RECORD)
+                    else f"📦 View batch #{batch.id}",
                     discord.ButtonStyle.success,
                     (
                         lambda batch_id: (

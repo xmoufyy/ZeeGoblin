@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -53,6 +54,7 @@ class ZeeGoblinBot(commands.Bot):
         )
         self.settings = settings
         self.services = services
+        self._background: set[asyncio.Task[None]] = set()
         self.tree.on_error = on_app_command_error
         register_lifecycle_logging(self)
 
@@ -96,6 +98,23 @@ class ZeeGoblinBot(commands.Bot):
                     guild.id,
                 )
                 raise
+
+    def dm_members(self, messages: dict[int, discord.Embed]) -> None:
+        """DM members in the background (MEMBER_DMS). Closed DMs are skipped silently."""
+        if not self.settings.member_dms or not messages:
+            return
+        task = asyncio.create_task(self._send_dms(messages))
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
+
+    async def _send_dms(self, messages: dict[int, discord.Embed]) -> None:
+        for discord_id, embed in messages.items():
+            try:
+                user = self.get_user(discord_id) or await self.fetch_user(discord_id)
+                await user.send(embed=embed)
+            except Exception as exc:  # closed DMs, deleted users, network blips: never fatal
+                log.debug("Could not DM %s: %s", discord_id, exc)
+            await asyncio.sleep(1)  # stay well inside Discord's DM rate limits
 
     async def notify_staff(self, embed: discord.Embed, view: discord.ui.View | None = None) -> bool:
         """Post to the private staff channel if one is configured. Never raises."""

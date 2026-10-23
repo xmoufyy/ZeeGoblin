@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import contextlib
 from collections import defaultdict
 
 import discord
 
-from bot.branding import GOLD, PURPLE, Quips, goblin_embed, sol
+from bot.branding import GOLD, PURPLE, Quips, goblin_embed, sol, tx_link
 from bot.events import guarded
 from bot.helpers import actor_of, bot_of
+from bot.views.batch_view import batch_files
 from bot.views.confirmation_view import OwnedView
 from config.permissions import Actor, Permission
 from database.models import AwardStatus, BatchStatus, PaymentStatus
 from services.payment_service import BatchDetail, PaymentRecord
+from services.tip_service import AwardRow
 from utils.validation import shorten_wallet
 
 MAX_OPTIONS = 25
@@ -64,7 +67,7 @@ def recorded_embed(result: PaymentRecord) -> discord.Embed:
     embed = goblin_embed(
         f"📨 Payment #{payment.id} recorded",
         f"{sol(payment.amount_lamports)} → `{payment.recipient_wallet}`\n"
-        f"Signature: `{payment.signature}`\n\n"
+        f"Transaction: {tx_link(payment.signature)}\n\n"
         "Once you've checked it landed, click **Confirm payment sent**. That's a manual "
         "confirmation by you, not blockchain verification.",
         colour=PURPLE,
@@ -84,20 +87,46 @@ class ConfirmPaymentView(OwnedView):
         await guarded(interaction, self._confirm(interaction))
 
     async def _confirm(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer(ephemeral=True, thinking=True)
+        await interaction.response.defer()  # update the message that holds the button
         await confirm_and_report(interaction, self.payment_id)
         self.stop()
+        with contextlib.suppress(discord.HTTPException):
+            await interaction.edit_original_response(view=None)  # can't be confirmed twice
 
 
-async def confirm_and_report(interaction: discord.Interaction, payment_id: int) -> None:
-    confirmed = await bot_of(interaction).services.payments.confirm_payment(
-        actor_of(interaction), payment_id
+async def confirm_and_report(
+    interaction: discord.Interaction, payment_id: int, note: str | None = None
+) -> None:
+    """Confirm a payment, tell the moderator, and DM each recipient that they were paid."""
+    bot = bot_of(interaction)
+    actor = actor_of(interaction)
+    confirmed = await bot.services.payments.confirm_payment(actor, payment_id, note)
+    signature = confirmed.payment.signature
+
+    by_member: dict[int, list[AwardRow]] = defaultdict(list)
+    for award_id in confirmed.award_ids:
+        row = await bot.services.tips.get(actor, award_id)
+        by_member[row.discord_user_id].append(row)
+    bot.dm_members(
+        {
+            discord_id: goblin_embed(
+                "💰 Zee paid you!",
+                f"**{sol(sum(r.amount_lamports for r in rows))}** was sent to "
+                f"`{shorten_wallet(rows[0].payout_wallet)}` for: "
+                + "; ".join(dict.fromkeys(r.reason for r in rows))
+                + f"\n\nTransaction: {tx_link(signature)}\n"
+                "-# Confirmed manually by staff. See all your tips with /profile.",
+                colour=GOLD,
+            )
+            for discord_id, rows in by_member.items()
+        }
     )
+
     await interaction.followup.send(
         embed=goblin_embed(
             Quips.PAID,
             f"Payment #{payment_id} manually confirmed. {len(confirmed.award_ids)} award(s) "
-            "marked paid.",
+            f"marked paid. Transaction: {tx_link(signature)}",
             colour=GOLD,
         ),
         ephemeral=True,
@@ -105,11 +134,19 @@ async def confirm_and_report(interaction: discord.Interaction, payment_id: int) 
 
 
 class BatchPayView(OwnedView):
-    """Menus on /batch view: record a payment for a wallet, or confirm a recorded one."""
+    """Controls under a batch: download CSVs, record a payment, confirm a recorded one."""
 
     def __init__(self, owner_id: int, detail: BatchDetail, actor: Actor) -> None:
         super().__init__(owner_id, timeout=900)
         self.batch_id = detail.batch.id
+        if actor.can(Permission.BATCH_EXPORT):
+            download: discord.ui.Button = discord.ui.Button(
+                label="📄 Download CSVs", style=discord.ButtonStyle.secondary, row=0
+            )
+            download.callback = lambda i: guarded(i, self._download(i))
+            self.add_item(download)
+        if detail.batch.status != BatchStatus.OPEN:
+            return
         unpaid: dict[str, int] = defaultdict(int)
         names: dict[str, list[str]] = defaultdict(list)
         for line in detail.lines:
@@ -165,9 +202,18 @@ class BatchPayView(OwnedView):
         await interaction.response.defer(ephemeral=True, thinking=True)
         await confirm_and_report(interaction, payment_id)
 
+    async def _download(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        detail = await bot_of(interaction).services.payments.get_batch(
+            actor_of(interaction), self.batch_id
+        )
+        await interaction.followup.send(
+            f"📄 CSVs for batch #{self.batch_id}. Pay from the **wallet-summary** file.",
+            files=batch_files(detail),
+            ephemeral=True,
+        )
+
 
 def batch_pay_view(owner_id: int, detail: BatchDetail, actor: Actor) -> BatchPayView | None:
-    if detail.batch.status != BatchStatus.OPEN:
-        return None
     view = BatchPayView(owner_id, detail, actor)
     return view if view.has_actions else None

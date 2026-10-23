@@ -7,7 +7,18 @@ from discord import app_commands
 from discord.ext import commands
 
 from bot.autocomplete import open_dispute_choices, rollcall_choices
-from bot.branding import GOLD, MAGENTA, ORANGE, PURPLE, Quips, goblin_embed, sol, status_text, ts
+from bot.branding import (
+    GOLD,
+    MAGENTA,
+    ORANGE,
+    PURPLE,
+    Quips,
+    goblin_embed,
+    sol,
+    status_text,
+    ts,
+    tx_link,
+)
 from bot.helpers import actor_of, bot_of, defer, identity_of, reply
 from bot.views.approval_view import ApprovalQueueView
 from bot.views.batch_view import batch_files, batch_summary_embed
@@ -65,7 +76,7 @@ def award_embed(row: AwardRow, title: str | None = None) -> discord.Embed:
     if row.batch_id:
         embed.add_field(name="Batch", value=f"#{row.batch_id}")
     if row.payment_signature:
-        embed.add_field(name="Transaction", value=f"`{row.payment_signature}`", inline=False)
+        embed.add_field(name="Transaction", value=tx_link(row.payment_signature), inline=False)
     if row.paid_at:
         source_text = {
             "manual": "manually confirmed by staff",
@@ -208,42 +219,6 @@ class TipCog(commands.GroupCog, group_name="tip", group_description="The Dude-Mu
         row = await self.services.tips.get(actor_of(interaction), award_id)
         await reply(interaction, embed=award_embed(row))
 
-    @app_commands.command(name="status", description="Ledger totals (staff) or your own totals")
-    @app_commands.checks.cooldown(5, 30)
-    async def status(self, interaction: discord.Interaction) -> None:
-        await defer(interaction)
-        actor = actor_of(interaction)
-        if not actor.can(Permission.AWARD_VIEW_QUEUE):
-            summary = await self.services.tips.profile(interaction.user.id)
-            lines = [
-                f"{status_text(s)}: {t.count} · {sol(t.lamports)}"
-                for s, t in summary.by_status.items()
-                if t.count
-            ]
-            await reply(
-                interaction,
-                embed=goblin_embed(
-                    "Your tips",
-                    "\n".join(lines) or "No tips yet. Show up to a roll call! 👑",
-                    colour=PURPLE,
-                ),
-            )
-            return
-        ledger = await self.services.tips.ledger_summary(actor)
-        lines = [
-            f"{status_text(s)}: **{t.count}** · {sol(t.lamports)}"
-            for s, t in ledger.by_status.items()
-        ]
-        embed = goblin_embed("🏦 Goblin treasury ledger", "\n".join(lines), colour=GOLD)
-        owed = sum(
-            ledger.by_status[s].lamports
-            for s in (AwardStatus.APPROVED, AwardStatus.QUEUED, AwardStatus.PAYMENT_SUBMITTED)
-        )
-        embed.add_field(name="Approved & unpaid", value=sol(owed))
-        embed.add_field(name="Open batches", value=str(ledger.open_batches))
-        embed.add_field(name="Open disputes", value=str(ledger.open_disputes))
-        await reply(interaction, embed=embed)
-
     @app_commands.command(name="history", description="Tip history for you or a member")
     @app_commands.checks.cooldown(5, 30)
     @app_commands.describe(user="Staff only: whose history to show")
@@ -262,7 +237,7 @@ class TipCog(commands.GroupCog, group_name="tip", group_description="The Dude-Mu
             )
             lines = [
                 award_line(row, show_user=False)
-                + (f"\n  ↳ tx `{row.payment_signature[:16]}…`" if row.payment_signature else "")
+                + (f"\n  ↳ {tx_link(row.payment_signature)}" if row.payment_signature else "")
                 for row in result.items
             ] or ["No awards yet."]
             embed = goblin_embed(
@@ -375,6 +350,10 @@ class TipCog(commands.GroupCog, group_name="tip", group_description="The Dude-Mu
             ),
         )
 
+    @view.autocomplete("award_id")
+    async def _view_ac(self, interaction: discord.Interaction, current: str):  # type: ignore[no-untyped-def]
+        return await _award_choices(interaction, current, tuple(AwardStatus))
+
     @app_commands.command(name="flag", description="Flag a suspicious award for head-mod review")
     async def flag(
         self,
@@ -393,6 +372,19 @@ class TipCog(commands.GroupCog, group_name="tip", group_description="The Dude-Mu
         )
         await reply(interaction, embed=embed)
         await bot_of(interaction).notify_staff(embed)
+
+    @flag.autocomplete("award_id")
+    async def _flag_ac(self, interaction: discord.Interaction, current: str):  # type: ignore[no-untyped-def]
+        return await _award_choices(
+            interaction,
+            current,
+            (
+                AwardStatus.PENDING_REVIEW,
+                AwardStatus.AWAITING_WALLET,
+                AwardStatus.APPROVED,
+                AwardStatus.PAYMENT_SUBMITTED,
+            ),
+        )
 
     @app_commands.command(
         name="rewallet",
@@ -422,6 +414,10 @@ class TipCog(commands.GroupCog, group_name="tip", group_description="The Dude-Mu
         row = await self.services.tips.return_to_review(actor, award_id, reason)
         await reply(interaction, embed=award_embed(row, f"↩️ Award #{award_id} back in review"))
 
+    @rewallet.autocomplete("award_id")
+    async def _rewallet_ac(self, interaction: discord.Interaction, current: str):  # type: ignore[no-untyped-def]
+        return await _award_choices(interaction, current, (AwardStatus.APPROVED,))
+
     # ------------------------------------------------------------------ payouts
 
     @app_commands.command(
@@ -446,7 +442,7 @@ class TipCog(commands.GroupCog, group_name="tip", group_description="The Dude-Mu
             "Create a payment batch?",
             f"Up to **{count}** approved award(s) ({sol(ready.lamports)} total approved) will be "
             "reserved for payment. ZeeGoblin will **not** send any SOL - you'll get CSV files "
-            "to pay manually, then record each transaction with `/payment record`.",
+            "to pay from, then record each transfer with the **💸 Record a payment** menu.",
             colour=ORANGE,
         )
         if not await confirm(interaction, prompt, confirm_label="Create batch"):
@@ -509,9 +505,14 @@ class DisputeCog(commands.GroupCog, group_name="dispute", group_description="Fla
         actor = actor_of(interaction)
         require(actor, Permission.DISPUTE_RESOLVE)
         await defer(interaction)
-        prompt = goblin_embed(
-            f"Resolve dispute #{dispute_id} as **{outcome.value}**?", note, colour=ORANGE
+        tips = bot_of(interaction).services.tips
+        dispute = await tips.get_dispute(actor, dispute_id)
+        prompt = award_embed(
+            await tips.get(actor, dispute.award_id),
+            f"Resolve dispute #{dispute_id} as {outcome.value}?",
         )
+        prompt.add_field(name="Why it was flagged", value=dispute.reason[:1024], inline=False)
+        prompt.add_field(name="Your note", value=note, inline=False)
         if not await confirm(
             interaction,
             prompt,
@@ -519,7 +520,7 @@ class DisputeCog(commands.GroupCog, group_name="dispute", group_description="Fla
             danger=outcome.value == DisputeResolution.VOIDED,
         ):
             return
-        dispute = await bot_of(interaction).services.tips.resolve_dispute(
+        dispute = await tips.resolve_dispute(
             actor, dispute_id, DisputeResolution(outcome.value), note
         )
         await reply(

@@ -101,6 +101,8 @@ class Settings(BaseSettings):
     require_separate_payment_confirmer: bool = False
 
     enable_message_checkin: bool = False
+    # Private DMs to members: "you got paid" and "add a wallet to claim your roll-call award".
+    member_dms: bool = True
     # Who gets pinged when a roll call starts: "@everyone", "@here", or "" for no ping.
     rollcall_ping: str = "@everyone"
     sync_commands_on_startup: bool = True

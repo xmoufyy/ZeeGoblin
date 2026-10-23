@@ -7,11 +7,11 @@ from discord import app_commands
 from discord.ext import commands
 
 from bot.autocomplete import batch_choices, unconfirmed_payment_choices
-from bot.branding import GOLD, MAGENTA, ORANGE, PURPLE, Quips, goblin_embed, sol, ts
+from bot.branding import GOLD, MAGENTA, ORANGE, PURPLE, goblin_embed, sol, ts, tx_link
 from bot.helpers import actor_of, bot_of, defer, reply
-from bot.views.batch_view import batch_files, batch_summary_embed
+from bot.views.batch_view import batch_summary_embed
 from bot.views.confirmation_view import confirm, send_paginated
-from bot.views.payment_view import batch_pay_view
+from bot.views.payment_view import ConfirmPaymentView, batch_pay_view, confirm_and_report
 from config.permissions import Permission, require
 from database.models import PaymentStatus
 from utils.currency import parse_sol
@@ -59,20 +59,6 @@ class BatchCog(commands.GroupCog, group_name="batch", group_description="Payment
         await reply(
             interaction,
             embed=batch_summary_embed(detail),
-            view=batch_pay_view(interaction.user.id, detail, actor),
-        )
-
-    @app_commands.command(name="export", description="Re-download a batch's CSV files")
-    @app_commands.autocomplete(batch_id=batch_choices)
-    async def export(self, interaction: discord.Interaction, batch_id: int) -> None:
-        actor = actor_of(interaction)
-        require(actor, Permission.BATCH_EXPORT)
-        await defer(interaction)
-        detail = await bot_of(interaction).services.payments.get_batch(actor, batch_id)
-        await reply(
-            interaction,
-            embed=batch_summary_embed(detail),
-            files=batch_files(detail),
             view=batch_pay_view(interaction.user.id, detail, actor),
         )
 
@@ -161,7 +147,7 @@ class PaymentCog(
             f"{'⚠️' if result.flagged else '📨'} Payment #{payment.id} recorded",
             f"{sol(payment.amount_lamports)} → `{payment.recipient_wallet}`\n"
             f"Awards: {', '.join(f'#{i}' for i in result.award_ids)}\n"
-            f"Signature: `{payment.signature}`",
+            f"Transaction: {tx_link(payment.signature)}",
             colour=MAGENTA if result.flagged else PURPLE,
         )
         if result.flagged:
@@ -169,16 +155,16 @@ class PaymentCog(
                 name="Flagged for review", value="; ".join(result.mismatches), inline=False
             )
             await bot.notify_staff(embed)
-        else:
-            embed.add_field(
-                name="Next",
-                value=(
-                    f"Once you've checked the transfer landed, confirm with "
-                    f"`/payment confirm payment_id:{payment.id}`."
-                ),
-                inline=False,
-            )
-        await reply(interaction, embed=embed)
+            await reply(interaction, embed=embed)
+            return
+        embed.add_field(
+            name="Next",
+            value="Once you've checked the transfer landed, click **Confirm payment sent**.",
+            inline=False,
+        )
+        await reply(
+            interaction, embed=embed, view=ConfirmPaymentView(interaction.user.id, payment.id)
+        )
 
     @app_commands.command(name="confirm", description="Confirm a recorded payment was sent")
     @app_commands.autocomplete(payment_id=unconfirmed_payment_choices)
@@ -197,7 +183,7 @@ class PaymentCog(
         prompt = goblin_embed(
             f"Confirm payment #{payment_id}?",
             f"{sol(payment.amount_lamports)} → `{payment.recipient_wallet}`\n"
-            f"Signature `{payment.signature}`\nAwards: "
+            f"Transaction: {tx_link(payment.signature)}\nAwards: "
             f"{', '.join(f'#{i}' for i in row.award_ids)}\n\n"
             "You are attesting this transfer was sent. This is a **manual confirmation**, "
             "not blockchain verification.",
@@ -205,16 +191,7 @@ class PaymentCog(
         )
         if not await confirm(interaction, prompt, confirm_label="Confirm payment"):
             return
-        confirmed = await services.payments.confirm_payment(actor, payment_id, note)
-        await reply(
-            interaction,
-            embed=goblin_embed(
-                Quips.PAID,
-                f"Payment #{payment_id} manually confirmed. {len(confirmed.award_ids)} award(s) "
-                "marked paid.",
-                colour=GOLD,
-            ),
-        )
+        await confirm_and_report(interaction, payment_id, note)
 
     @app_commands.command(name="history", description="Recorded payments")
     @app_commands.autocomplete(batch_id=batch_choices)
@@ -242,8 +219,8 @@ class PaymentCog(
                 f"**#{r.payment.id}** · batch #{r.payment.batch_id} · "
                 f"{sol(r.payment.amount_lamports)} → `{shorten_wallet(r.payment.recipient_wallet)}`"
                 f" · {PAYMENT_STATUS_TEXT[PaymentStatus(r.payment.status)]}\n"
-                f"  ↳ awards {', '.join(f'#{i}' for i in r.award_ids)} · tx "
-                f"`{r.payment.signature[:12]}…` · {ts(r.payment.recorded_at, 'd')}"
+                f"  ↳ awards {', '.join(f'#{i}' for i in r.award_ids)} · "
+                f"{tx_link(r.payment.signature)} · {ts(r.payment.recorded_at, 'd')}"
                 for r in result.items
             ] or ["No payments recorded."]
             embed = goblin_embed("💸 Payment history", "\n".join(lines), colour=PURPLE)

@@ -70,6 +70,11 @@ def status_text(status: str) -> str:
     return f"{STATUS_EMOJI.get(status, '')} {label(status)}".strip()
 
 
+def tx_link(signature: str) -> str:
+    """Markdown link to a transaction on Solscan, so anyone can check it landed."""
+    return f"[`{signature[:10]}…{signature[-6:]}`](https://solscan.io/tx/{signature})"
+
+
 def ts(moment: datetime, style: str = "f") -> str:
     """Discord timestamp markup, rendered in each viewer's own timezone."""
     return f"<t:{int(moment.timestamp())}:{style}>"

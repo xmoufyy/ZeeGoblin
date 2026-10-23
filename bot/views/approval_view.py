@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import re
 from collections.abc import Awaitable, Callable
 
@@ -101,14 +102,28 @@ class ApproveEventButton(
 
     async def callback(self, interaction: discord.Interaction) -> None:
         if interaction.guild_id != bot_of(interaction).settings.discord_guild_id:
+            await interaction.response.send_message(
+                "This button isn't for this server.", ephemeral=True
+            )
             return
         await guarded(interaction, self._approve(interaction))
 
     async def _approve(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer(ephemeral=True, thinking=True)
+        await interaction.response.defer()  # acknowledge the click on the staff message itself
         result = await bot_of(interaction).services.tips.approve_event(
             actor_of(interaction), self.event_id
         )
+        # Retire the button so nobody wonders whether it still needs clicking.
+        done = discord.ui.View(timeout=None)
+        done.add_item(
+            discord.ui.Button(
+                label=f"✅ Approved by {interaction.user.display_name}"[:80],
+                style=discord.ButtonStyle.secondary,
+                disabled=True,
+            )
+        )
+        with contextlib.suppress(discord.HTTPException):
+            await interaction.edit_original_response(view=done)
         if not (result.approved or result.skipped_own or result.skipped_no_wallet):
             text = f"Nothing left to approve for roll call #{self.event_id}. 🧌"
         else:

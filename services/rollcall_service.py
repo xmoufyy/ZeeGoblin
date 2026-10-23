@@ -70,6 +70,8 @@ class FinalizeResult:
     total_lamports: int = 0
     # Wallet -> Discord IDs of participants sharing it (possible alt accounts; flag only).
     shared_wallets: dict[str, list[int]] = field(default_factory=dict)
+    # Discord IDs of participants whose award waits for a wallet (for reminder DMs).
+    awaiting_wallet_discord_ids: list[int] = field(default_factory=list)
 
 
 class RollCallService:
@@ -293,6 +295,7 @@ class RollCallService:
             )
 
             pending = awaiting = total = 0
+            awaiting_user_ids: list[int] = []
             if award:
                 for entry in entries:
                     if entry.id in already_awarded:
@@ -333,6 +336,7 @@ class RollCallService:
                         pending += 1
                     else:
                         awaiting += 1
+                        awaiting_user_ids.append(entry.user_id)
 
             by_wallet: dict[str, list[int]] = defaultdict(list)
             for entry in entries:
@@ -340,7 +344,8 @@ class RollCallService:
                     by_wallet[wallets[entry.user_id]].append(entry.user_id)
             shared_users = {w: users for w, users in by_wallet.items() if len(users) > 1}
             discord_ids = await discord_ids_for(
-                session, [u for users in shared_users.values() for u in users]
+                session,
+                [u for users in shared_users.values() for u in users] + awaiting_user_ids,
             )
             shared = {w: [discord_ids[u][0] for u in users] for w, users in shared_users.items()}
 
@@ -387,6 +392,7 @@ class RollCallService:
                 awaiting_wallet=awaiting,
                 total_lamports=total,
                 shared_wallets=shared,
+                awaiting_wallet_discord_ids=[discord_ids[u][0] for u in awaiting_user_ids],
             )
 
     # ------------------------------------------------------------------ discord sync flags

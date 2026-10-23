@@ -32,7 +32,6 @@ EXPECTED_COMMANDS = {
     "tip": {
         "list",
         "view",
-        "status",
         "history",
         "add",
         "approve",
@@ -43,7 +42,7 @@ EXPECTED_COMMANDS = {
         "export-batch",
     },
     "dispute": {"list", "resolve"},
-    "batch": {"list", "view", "export", "cancel"},
+    "batch": {"list", "view", "cancel"},
     "payment": {"record", "confirm", "history"},
     "admin": {"audit", "presence", "whoami"},
     "solpump": set(),
@@ -138,6 +137,7 @@ def fake_interaction(  # type: ignore[no-untyped-def]
         followup=FakeFollowup(response.messages),
         command=None,
         id=1,
+        edit_original_response=response.edit_message,
     )
 
 
@@ -325,7 +325,8 @@ async def test_pay_batch_from_menus(bot, services) -> None:
         await services.tips.approve(HEAD_MOD, award.id)
     detail = await services.payments.create_batch(PAYMENT_MOD)
     view = BatchPayView(PAYMENT_MOD.discord_id, detail, PAYMENT_MOD)
-    [picker] = view.children
+    download, picker = view.children
+    assert download.label == "📄 Download CSVs"
     assert {o.value for o in picker.options} == {make_address(71), make_address(72)}
     assert not BatchPayView(HEAD_MOD.discord_id, detail, HEAD_MOD).has_actions  # view-only
 
@@ -381,3 +382,84 @@ async def test_id_autocomplete(bot, services) -> None:
     [choice] = await batch_choices(payer, "")
     assert choice.value == detail.batch.id and "open" in choice.name
     assert await batch_choices(fake_interaction(bot, 5), "") == []  # members see nothing
+
+
+async def test_review_fixes(bot, services, clock, monkeypatch) -> None:
+    """Regression tests for issues found in the full review."""
+    from bot.views.approval_view import ApproveEventButton
+    from bot.views.payment_view import BatchPayView, confirm_and_report
+    from tests.conftest import make_signature
+
+    dms: list[dict[int, discord.Embed]] = []
+    monkeypatch.setattr(bot, "dm_members", lambda messages: dms.append(messages))
+    staff_posts: list[discord.Embed] = []
+
+    async def fake_notify(embed, view=None):  # type: ignore[no-untyped-def]
+        staff_posts.append(embed)
+        return True
+
+    monkeypatch.setattr(bot, "notify_staff", fake_notify)
+    monkeypatch.setattr(bot.settings, "staff_channel_id", 999)
+
+    # 1. Closing a roll call DMs participants who still need a wallet, once.
+    cog = bot.get_cog("RollCallCog")
+
+    class FakeMessage:
+        async def edit(self, **kwargs: object) -> None:
+            pass
+
+    cog._message = lambda event: FakeMessage()  # type: ignore[method-assign]
+    await services.wallets.set_wallet(member(100), make_address(100))
+    event = await services.rollcalls.start(
+        MOD, guild_id=GUILD_ID, channel_id=1, duration_minutes=1, reward_lamports=10_000_000
+    )
+    await services.rollcalls.check_in(event.id, member(100))
+    await services.rollcalls.check_in(event.id, member(101))  # no wallet
+    clock.advance(minutes=2)
+    await cog.scheduler.coro(cog)
+    assert [list(m) for m in dms] == [[101]]
+    assert "You've got SOL waiting" in dms[0][101].title
+
+    # 2. Publishing again (e.g. /rollcall end racing the scheduler) never re-posts to staff.
+    closed = await services.rollcalls.get(event.id)
+    await cog.publish_closure(closed, None)
+    await cog.scheduler.coro(cog)
+    assert len(staff_posts) == 1
+    assert "pending review when they add one" in staff_posts[0].fields[-1].value
+
+    # 3. The Approve-all button retires itself after a successful click.
+    click = fake_interaction(bot, HEAD_MOD.discord_id, role_ids=(HEAD_MOD_ROLE,))
+    await ApproveEventButton(event.id).callback(click)
+    [edit] = click.response.edits
+    [retired] = edit["view"].children
+    assert retired.disabled and retired.label.startswith("✅ Approved by")
+
+    # 4. Confirming a payment DMs the member with a Solscan link.
+    dms.clear()
+    detail = await services.payments.create_batch(PAYMENT_MOD)
+    record = await services.payments.record_payment(
+        PAYMENT_MOD,
+        batch_id=detail.batch.id,
+        wallet=make_address(100),
+        amount_lamports=10_000_000,
+        signature=make_signature(100),
+    )
+    payer = fake_interaction(bot, PAYMENT_MOD.discord_id, role_ids=(PAYMENT_MOD_ROLE,))
+    await confirm_and_report(payer, record.payment.id)
+    [paid_dm] = dms
+    assert "solscan.io/tx/" in paid_dm[100].description and "0.01 SOL" in paid_dm[100].description
+
+    # 5. "Download CSVs" sends both files privately (replaces /batch export).
+    sent: dict[str, object] = {}
+
+    async def capture(content=None, **kwargs):  # type: ignore[no-untyped-def]
+        sent.update(kwargs)
+
+    download_click = fake_interaction(bot, PAYMENT_MOD.discord_id, role_ids=(PAYMENT_MOD_ROLE,))
+    download_click.followup.send = capture
+    view = BatchPayView(PAYMENT_MOD.discord_id, detail, PAYMENT_MOD)
+    await view.children[0].callback(download_click)
+    assert [f.filename for f in sent["files"]] == [
+        f"zeegoblin-batch-{detail.batch.id}.csv",
+        f"zeegoblin-batch-{detail.batch.id}-wallet-summary.csv",
+    ]
