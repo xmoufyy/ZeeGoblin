@@ -122,3 +122,23 @@ def test_a05_database_locked_message() -> None:
     error = OperationalError("BEGIN IMMEDIATE", {}, Exception("database is locked"))
     assert "nothing was changed" in user_message(error)
     assert user_message(OperationalError("x", {}, Exception("disk I/O error"))) is None
+
+
+async def test_wallet_reminders_rate_limited_and_respect_opt_out(services, clock) -> None:
+    """A-06: missing-wallet DMs go out at most once per 24 h and never to opted-out members."""
+    for discord_id in (40, 41, 42):
+        await services.tips.add_manual(MOD, member(discord_id), 1_000, f"w{discord_id}")
+    await services.notifications.set_dm_opt_out(member(41), True)
+    await services.wallets.set_wallet(member(42), make_address(42))  # no longer missing
+
+    chosen, skipped = await services.notifications.claim_wallet_reminders()
+    assert (chosen, skipped) == ([40], 1)
+    assert await services.notifications.claim_wallet_reminders([40]) == ([], 1)  # cooldown
+    clock.advance(hours=25)
+    assert await services.notifications.claim_wallet_reminders([40]) == ([40], 0)
+
+    missing = await services.notifications.missing_wallets(HEAD_MOD)
+    assert {(m.discord_user_id, m.dm_opt_out) for m in missing} == {(40, False), (41, True)}
+    assert await services.notifications.opted_out([40, 41, 999]) == {41}
+    await services.notifications.set_dm_opt_out(member(41), False)
+    assert await services.notifications.opted_out([41]) == set()

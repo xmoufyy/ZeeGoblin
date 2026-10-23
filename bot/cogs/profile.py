@@ -7,7 +7,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from bot.branding import PURPLE, goblin_embed, sol, ts
-from bot.helpers import bot_of, defer, reply
+from bot.helpers import bot_of, defer, identity_of, reply
 from database.models import AwardStatus as S
 
 
@@ -54,6 +54,10 @@ class ProfileCog(commands.Cog):
         lines.append(f"⚠️ Disputed: {sol(totals[S.DISPUTED].lamports)}")
         embed.add_field(name="Tips", value="\n".join(lines), inline=False)
         embed.add_field(name="Roll calls attended", value=str(summary.rollcall_count))
+        dms_off = await bot_of(interaction).services.notifications.dm_opt_out(interaction.user.id)
+        embed.add_field(
+            name="DMs from ZeeGoblin", value="🔕 off" if dms_off else "🔔 on (`/notifications`)"
+        )
         embed.add_field(
             name="Note",
             value="Paid amounts are confirmed manually by staff; on-chain verification is "
@@ -61,6 +65,30 @@ class ProfileCog(commands.Cog):
             inline=False,
         )
         await reply(interaction, embed=embed)
+
+    @app_commands.command(
+        name="notifications", description="Turn ZeeGoblin's DMs (payments, wallet reminders) on/off"
+    )
+    @app_commands.choices(
+        dms=[
+            app_commands.Choice(name="on - payment notices and wallet reminders", value="on"),
+            app_commands.Choice(name="off - no DMs from ZeeGoblin", value="off"),
+        ]
+    )
+    @app_commands.checks.cooldown(3, 60)
+    async def notifications(
+        self, interaction: discord.Interaction, dms: app_commands.Choice[str]
+    ) -> None:
+        await defer(interaction)
+        await bot_of(interaction).services.notifications.set_dm_opt_out(
+            identity_of(interaction.user), dms.value == "off"
+        )
+        text = (
+            "🔕 Got it - no more DMs from ZeeGoblin. Check your tips any time with `/profile`."
+            if dms.value == "off"
+            else "🔔 DMs on. You'll hear from the goblin when you get paid or need a wallet."
+        )
+        await reply(interaction, text)
 
 
 async def setup(bot: commands.Bot) -> None:

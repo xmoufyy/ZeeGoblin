@@ -111,7 +111,14 @@ class ZeeGoblinBot(commands.Bot):
         task.add_done_callback(self._background.discard)
 
     async def _send_dms(self, messages: dict[int, discord.Embed]) -> None:
+        try:
+            opted_out = await self.services.notifications.opted_out(list(messages))
+        except Exception:
+            log.exception("Could not read DM preferences; sending no DMs this time")
+            return
         for discord_id, embed in messages.items():
+            if discord_id in opted_out:
+                continue
             try:
                 user = self.get_user(discord_id) or await self.fetch_user(discord_id)
                 await user.send(embed=embed)

@@ -145,11 +145,14 @@ async def send_paginated(
     *,
     copy_text: CopyText | None = None,
     copy_label: str = "📋 Copy",
+    extra_items: list[discord.ui.Item] | None = None,
 ) -> None:
     embed, pages = await render(page)
     view = None
-    if pages > 1 or copy_text is not None:
+    if pages > 1 or copy_text is not None or extra_items:
         view = Paginator(
             interaction.user.id, render, page, pages, copy_text=copy_text, copy_label=copy_label
         )
+        for item in extra_items or []:
+            view.add_item(item)
     await reply(interaction, embed=embed, view=view)

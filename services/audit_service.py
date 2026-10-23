@@ -43,6 +43,7 @@ class AuditAction(StrEnum):
     PAYMENT_FLAGGED = "payment.flagged"
     PAYMENT_CONFIRMED = "payment.confirmed"
     SETTING_CHANGED = "admin.setting_changed"
+    MEMBER_PREFERENCE_CHANGED = "member.preference_changed"
 
 
 @dataclass(frozen=True)

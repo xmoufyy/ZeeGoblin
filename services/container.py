@@ -11,6 +11,7 @@ from database.models import BotSetting
 from database.session import Database
 from services.audit_service import AuditAction, AuditService, record_audit
 from services.community_service import CommunityService
+from services.notification_service import NotificationService
 from services.payment_service import PaymentService
 from services.recovery_service import RecoveryService
 from services.rollcall_service import RollCallService
@@ -62,6 +63,7 @@ class Services:
     recovery: RecoveryService
     settings: SettingsStore
     community: CommunityService
+    notifications: NotificationService
 
 
 def build_services(db: Database, limits: Limits, clock: Clock = utcnow) -> Services:
@@ -77,4 +79,5 @@ def build_services(db: Database, limits: Limits, clock: Clock = utcnow) -> Servi
         recovery=RecoveryService(rollcalls),
         settings=SettingsStore(db),
         community=CommunityService(db),
+        notifications=NotificationService(db, clock),
     )

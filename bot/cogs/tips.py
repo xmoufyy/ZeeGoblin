@@ -19,6 +19,7 @@ from bot.branding import (
     ts,
     tx_link,
 )
+from bot.events import guarded
 from bot.helpers import actor_of, bot_of, defer, identity_of, reply
 from bot.views.approval_view import ApprovalQueueView
 from bot.views.batch_view import batch_files, batch_summary_embed
@@ -111,6 +112,42 @@ async def _award_choices(
     ]
 
 
+async def remind_missing_wallets(interaction: discord.Interaction) -> None:
+    """Privately nudge members whose awards are stuck on 'awaiting wallet'.
+
+    Rate-limited per member (24 h) and skips anyone who turned DMs off.
+    """
+    actor = actor_of(interaction)
+    require(actor, Permission.AWARD_VIEW_QUEUE)
+    bot = bot_of(interaction)
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    if not bot.settings.member_dms:
+        raise InputError("Member DMs are switched off for this server (`MEMBER_DMS=false`).")
+    owed = {m.discord_user_id: m for m in await bot.services.notifications.missing_wallets(actor)}
+    chosen, skipped = await bot.services.notifications.claim_wallet_reminders(list(owed))
+    bot.dm_members(
+        {
+            discord_id: goblin_embed(
+                "👛 You've got SOL waiting!",
+                f"You have **{owed[discord_id].award_count}** Dude-Munity award(s) worth "
+                f"**{sol(owed[discord_id].lamports)}** waiting, but no wallet registered.\n\n"
+                "Run `/wallet set` in the server with your **public** SOL address so staff can "
+                "review them. Never share your seed phrase or private key.\n"
+                "-# Don't want DMs? `/notifications dms:off`",
+                colour=ORANGE,
+            )
+            for discord_id in chosen
+        }
+    )
+    await interaction.followup.send(
+        f"📨 Reminding **{len(chosen)}** member(s) privately."
+        + (
+            f" Skipped {skipped} (reminded in the last 24 h, or DMs turned off)." if skipped else ""
+        ),
+        ephemeral=True,
+    )
+
+
 class TipCog(commands.GroupCog, group_name="tip", group_description="The Dude-Munity tip ledger"):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
@@ -165,12 +202,20 @@ class TipCog(commands.GroupCog, group_name="tip", group_description="The Dude-Mu
             return "\n".join(wallets) or "No wallets on this page."
 
         if wanted != AwardStatus.PENDING_REVIEW or not actor.can(Permission.AWARD_APPROVE):
+            extra = []
+            if wanted == AwardStatus.AWAITING_WALLET:
+                remind = discord.ui.Button(
+                    label="📨 Remind missing wallets", style=discord.ButtonStyle.primary
+                )
+                remind.callback = lambda i: guarded(i, remind_missing_wallets(i))
+                extra.append(remind)
             await send_paginated(
                 interaction,
                 render,
                 max(1, page),
                 copy_text=copy_wallets,
                 copy_label="📋 Copy wallets",
+                extra_items=extra,
             )
             return
 

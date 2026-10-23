@@ -50,6 +50,7 @@ EXPECTED_COMMANDS = {
     "leaderboard": set(),
     "rank": set(),
     "roast": set(),
+    "notifications": set(),
 }
 
 
@@ -500,3 +501,29 @@ async def test_fun_commands(bot, services, clock) -> None:
     toaster = fake_interaction(bot, 5)
     await cog.roast.callback(cog, toaster, target(7, is_bot=True))
     assert "toaster" in toaster.response.messages[0]
+
+
+async def test_remind_missing_wallets_button(bot, services, monkeypatch) -> None:
+    from bot.cogs.tips import remind_missing_wallets
+
+    sent: list[dict[int, discord.Embed]] = []
+    monkeypatch.setattr(bot, "dm_members", lambda messages: sent.append(messages))
+    await services.tips.add_manual(MOD, member(50), 25_000_000, "Clip")
+    await services.tips.add_manual(MOD, member(50), 5_000_000, "Call")
+
+    click = fake_interaction(bot, MOD.discord_id, role_ids=(MOD_ROLE,))
+    await remind_missing_wallets(click)
+    assert "Reminding **1**" in click.response.messages[0]
+    assert "0.03 SOL" in sent[0][50].description and "**2**" in sent[0][50].description
+
+    again = fake_interaction(bot, MOD.discord_id, role_ids=(MOD_ROLE,))
+    await remind_missing_wallets(again)
+    assert (
+        "Reminding **0**" in again.response.messages[0]
+        and "Skipped 1" in again.response.messages[0]
+    )
+
+    from services.errors import PermissionDenied
+
+    with pytest.raises(PermissionDenied):  # members can't trigger reminders
+        await remind_missing_wallets(fake_interaction(bot, 50))

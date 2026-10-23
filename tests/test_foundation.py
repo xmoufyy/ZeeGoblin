@@ -80,6 +80,33 @@ class TestMigrations:
             }
         assert {"trg_audit_logs_no_update", "trg_tip_awards_payout_snapshot_immutable"} <= triggers
 
+    def test_upgrade_from_0001_keeps_data_and_backs_up(self, tmp_path) -> None:
+        """0001 -> head on a populated database (users referenced by foreign keys)."""
+        from alembic import command
+
+        from database.migrate import alembic_config
+
+        db_file = tmp_path / "old.db"
+        url = f"sqlite+aiosqlite:///{db_file.as_posix()}"
+        command.upgrade(alembic_config(url), "0001")
+        with sqlite3.connect(db_file) as conn:
+            conn.execute(
+                "INSERT INTO users (created_at, updated_at) VALUES ('2026-01-01', '2026-01-01')"
+            )
+            conn.execute(
+                "INSERT INTO tip_awards (user_id, source, reason, amount_lamports, status, "
+                "created_at, updated_at) VALUES (1, 'manual', 'kept', 1000, 'awaiting_wallet', "
+                "'2026-01-01', '2026-01-01')"
+            )
+        upgrade_to_head(url, backup_dir=tmp_path / "backups")
+        with sqlite3.connect(db_file) as conn:
+            assert conn.execute("SELECT dm_opt_out FROM users").fetchall() == [(0,)]
+            assert conn.execute("SELECT reason FROM tip_awards").fetchall() == [("kept",)]
+            assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        [backup] = (tmp_path / "backups").iterdir()
+        with sqlite3.connect(backup) as conn:  # pre-migration copy, still on 0001
+            assert conn.execute("SELECT version_num FROM alembic_version").fetchone() == ("0001",)
+
     def test_upgrade_preserves_data_and_backup_works(self, tmp_path) -> None:
         db_file = tmp_path / "keep.db"
         url = f"sqlite+aiosqlite:///{db_file.as_posix()}"

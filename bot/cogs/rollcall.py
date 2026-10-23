@@ -314,14 +314,18 @@ class RollCallCog(commands.GroupCog, group_name="rollcall", group_description="Z
         self._shown_counts.pop(event.id, None)
         self._last_edit.pop(event.id, None)
         if result is not None and not result.already_finalized:
-            self._remind_missing_wallets(event, result.awaiting_wallet_discord_ids)
+            await self._remind_missing_wallets(event, result.awaiting_wallet_discord_ids)
         async with self._publish_lock:
             # Re-read: another caller may have finished these steps while we waited.
             fresh = await self.services.rollcalls.get(event.id)
             if fresh is not None:
                 await self._publish_steps(fresh, result)
 
-    def _remind_missing_wallets(self, event: Event, discord_ids: list[int]) -> None:
+    async def _remind_missing_wallets(self, event: Event, discord_ids: list[int]) -> None:
+        if not discord_ids:
+            return
+        # Respects opt-outs and the 24h reminder cooldown, so regulars aren't nagged nightly.
+        discord_ids, _ = await self.services.notifications.claim_wallet_reminders(discord_ids)
         embed = goblin_embed(
             "👛 You've got SOL waiting!",
             f"You checked in to Zee's roll call #{event.id} and earned "

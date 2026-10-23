@@ -149,6 +149,12 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # Member chose not to receive ZeeGoblin DMs (payment notices, wallet reminders).
+    dm_opt_out: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("0")
+    )
+    # Last "register a wallet" reminder, used to rate-limit reminders.
+    last_wallet_reminder_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=_utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         UTCDateTime, default=_utcnow, onupdate=_utcnow, nullable=False
