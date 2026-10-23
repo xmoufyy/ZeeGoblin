@@ -47,6 +47,7 @@ EXPECTED_COMMANDS = {
     "payment": {"record", "confirm", "history"},
     "admin": {"audit", "presence", "whoami"},
     "solpump": set(),
+    "staff": set(),
 }
 
 
@@ -91,6 +92,10 @@ class FakeResponse:
 
     async def defer(self, **_: object) -> None:
         self.done = True
+
+    async def send_modal(self, modal: object) -> None:
+        self.done = True
+        self.modal = modal
 
     async def edit_message(self, **kwargs: object) -> None:
         self.done = True
@@ -284,3 +289,95 @@ async def test_tip_list_approve_buttons(bot: ZeeGoblinBot, services: Services) -
         ],
     )
     assert "Not approved" in summary
+
+
+HEAD_MOD_ROLE, PAYMENT_MOD_ROLE, MOD_ROLE = 2, 4, 3  # role IDs used by the bot fixture
+
+
+async def test_staff_dashboard_buttons_follow_permissions(bot, services) -> None:
+    from bot.cogs.staff import build_dashboard
+
+    await services.wallets.set_wallet(member(70), make_address(70))
+    award = await services.tips.add_manual(MOD, member(70), 10_000_000, "Clip")
+    _, mod_buttons = await build_dashboard(bot, MOD, GUILD_ID)
+    labels = [label for label, *_ in mod_buttons]
+    assert labels[0] == "🕵️ Review pending (1)"
+    assert not any("Export" in label for label in labels)  # mods can't export
+
+    await services.tips.approve(HEAD_MOD, award.id)
+    _, payer_buttons = await build_dashboard(bot, PAYMENT_MOD, GUILD_ID)
+    export = next(b for b in payer_buttons if b[0].startswith("📦 Export"))
+    assert export[0] == "📦 Export batch (1)" and export[3] is False  # enabled
+
+    # Clicking "Review pending" runs the real /tip list handler.
+    click = fake_interaction(bot, MOD.discord_id, role_ids=(MOD_ROLE,))
+    await mod_buttons[0][2](click)
+    assert click.response.messages  # list was sent
+
+
+async def test_pay_batch_from_menus(bot, services) -> None:
+    from bot.views.payment_view import BatchPayView, ConfirmPaymentView
+    from tests.conftest import make_signature
+
+    for discord_id in (71, 72):
+        await services.wallets.set_wallet(member(discord_id), make_address(discord_id))
+        award = await services.tips.add_manual(MOD, member(discord_id), 20_000_000, "Win")
+        await services.tips.approve(HEAD_MOD, award.id)
+    detail = await services.payments.create_batch(PAYMENT_MOD)
+    view = BatchPayView(PAYMENT_MOD.discord_id, detail, PAYMENT_MOD)
+    [picker] = view.children
+    assert {o.value for o in picker.options} == {make_address(71), make_address(72)}
+    assert not BatchPayView(HEAD_MOD.discord_id, detail, HEAD_MOD).has_actions  # view-only
+
+    pick = fake_interaction(bot, PAYMENT_MOD.discord_id, role_ids=(PAYMENT_MOD_ROLE,))
+    picker._values = [make_address(71)]  # what Discord sets when an option is chosen
+    await picker.callback(pick)
+    modal = pick.response.modal
+    assert modal.lamports == 20_000_000  # exact amount prefilled, nothing to type
+    modal.signature._value = make_signature(71)  # what Discord fills in on submit
+    submit = fake_interaction(bot, PAYMENT_MOD.discord_id, role_ids=(PAYMENT_MOD_ROLE,))
+    await modal.on_submit(submit)
+    assert submit.followup.views, submit.response.messages
+    [confirm_view] = submit.followup.views
+    assert isinstance(confirm_view, ConfirmPaymentView)
+
+    click = fake_interaction(bot, PAYMENT_MOD.discord_id, role_ids=(PAYMENT_MOD_ROLE,))
+    await confirm_view.confirm_button.callback(click)
+    rows = (await services.tips.list_awards(OWNER_ACTOR, status=AwardStatus.PAID)).items
+    assert [r.display_wallet for r in rows] == [make_address(71)]
+
+
+async def test_staff_summary_approve_all_button(bot, services, clock) -> None:
+    from bot.views.approval_view import ApproveEventButton, approve_event_view
+
+    await services.wallets.set_wallet(member(80), make_address(80))
+    event = await services.rollcalls.start(
+        MOD, guild_id=GUILD_ID, channel_id=1, duration_minutes=1, reward_lamports=10_000_000
+    )
+    await services.rollcalls.check_in(event.id, member(80))
+    await services.rollcalls.check_in(event.id, member(81))  # no wallet
+    clock.advance(minutes=2)
+    [result] = await services.rollcalls.finalize_due()
+    [button] = approve_event_view(result.event).children
+    assert button.item.label == "✅ Approve all (1)"
+
+    denied = fake_interaction(bot, MOD.discord_id, role_ids=(MOD_ROLE,))
+    await ApproveEventButton(event.id).callback(denied)
+    assert "permission" in denied.response.messages[0].lower()
+
+    ok = fake_interaction(bot, HEAD_MOD.discord_id, role_ids=(HEAD_MOD_ROLE,))
+    await ApproveEventButton(event.id).callback(ok)
+    assert "Approved **1**" in ok.response.messages[0]
+
+
+async def test_id_autocomplete(bot, services) -> None:
+    from bot.autocomplete import batch_choices
+
+    await services.wallets.set_wallet(member(90), make_address(90))
+    award = await services.tips.add_manual(MOD, member(90), 10_000_000, "x")
+    await services.tips.approve(HEAD_MOD, award.id)
+    detail = await services.payments.create_batch(PAYMENT_MOD)
+    payer = fake_interaction(bot, PAYMENT_MOD.discord_id, role_ids=(PAYMENT_MOD_ROLE,))
+    [choice] = await batch_choices(payer, "")
+    assert choice.value == detail.batch.id and "open" in choice.name
+    assert await batch_choices(fake_interaction(bot, 5), "") == []  # members see nothing

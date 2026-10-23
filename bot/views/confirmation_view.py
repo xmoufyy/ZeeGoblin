@@ -10,7 +10,7 @@ import discord
 from bot.helpers import reply
 
 
-class _OwnedView(discord.ui.View):
+class OwnedView(discord.ui.View):
     def __init__(self, owner_id: int, *, timeout: float) -> None:
         super().__init__(timeout=timeout)
         self.owner_id = owner_id
@@ -24,7 +24,7 @@ class _OwnedView(discord.ui.View):
         return True
 
 
-class ConfirmationView(_OwnedView):
+class ConfirmationView(OwnedView):
     def __init__(self, owner_id: int, *, confirm_label: str, danger: bool, timeout: float = 60):
         super().__init__(owner_id, timeout=timeout)
         self.confirmed: bool | None = None
@@ -72,7 +72,7 @@ Renderer = Callable[[int], Awaitable[tuple[discord.Embed, int]]]
 CopyText = Callable[[int], Awaitable[str]]
 
 
-class Paginator(_OwnedView):
+class Paginator(OwnedView):
     def __init__(
         self,
         owner_id: int,

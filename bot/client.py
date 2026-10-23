@@ -12,6 +12,7 @@ from discord.ext import commands
 
 from bot.events import on_app_command_error, register_lifecycle_logging, send_error
 from bot.presence import load_activity
+from bot.views.approval_view import ApproveEventButton
 from bot.views.rollcall_view import CheckInButton
 from config.settings import Settings
 from services.container import Services
@@ -26,6 +27,7 @@ EXTENSIONS = (
     "bot.cogs.payments",
     "bot.cogs.administration",
     "bot.cogs.promo",
+    "bot.cogs.staff",
 )
 
 
@@ -56,7 +58,7 @@ class ZeeGoblinBot(commands.Bot):
 
     async def setup_hook(self) -> None:
         # Persistent check-in buttons for every roll call, past and future.
-        self.add_dynamic_items(CheckInButton)
+        self.add_dynamic_items(CheckInButton, ApproveEventButton)
         for extension in EXTENSIONS:
             await self.load_extension(extension)
 
@@ -95,14 +97,17 @@ class ZeeGoblinBot(commands.Bot):
                 )
                 raise
 
-    async def notify_staff(self, embed: discord.Embed) -> bool:
+    async def notify_staff(self, embed: discord.Embed, view: discord.ui.View | None = None) -> bool:
         """Post to the private staff channel if one is configured. Never raises."""
         channel_id = self.settings.staff_channel_id
         if not channel_id:
             return False
         try:
             channel = self.get_channel(channel_id) or await self.fetch_channel(channel_id)
-            await channel.send(embed=embed)  # type: ignore[union-attr]
+            if view is None:
+                await channel.send(embed=embed)  # type: ignore[union-attr]
+            else:
+                await channel.send(embed=embed, view=view)  # type: ignore[union-attr]
             return True
         except discord.HTTPException as exc:
             log.warning("Could not post to staff channel %s: %s", channel_id, exc)

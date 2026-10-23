@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable
 
 import discord
 from discord import app_commands
@@ -76,3 +77,17 @@ def register_lifecycle_logging(client: discord.Client) -> None:
     @client.event
     async def on_disconnect() -> None:
         log.warning("Disconnected from Discord; discord.py will reconnect automatically")
+
+
+async def guarded(interaction: discord.Interaction, action: Awaitable[None]) -> None:
+    """Run a button/menu/modal action with the same error handling as slash commands."""
+    try:
+        await action
+    except Exception as error:
+        message = user_message(error)
+        if message is None:
+            log.error(
+                "Unhandled error in component action (user %s)", interaction.user.id, exc_info=error
+            )
+            message = Quips.UNEXPECTED
+        await send_error(interaction, message)

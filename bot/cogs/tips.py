@@ -6,11 +6,13 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from bot.autocomplete import open_dispute_choices, rollcall_choices
 from bot.branding import GOLD, MAGENTA, ORANGE, PURPLE, Quips, goblin_embed, sol, status_text, ts
 from bot.helpers import actor_of, bot_of, defer, identity_of, reply
 from bot.views.approval_view import ApprovalQueueView
 from bot.views.batch_view import batch_files, batch_summary_embed
 from bot.views.confirmation_view import confirm, send_paginated
+from bot.views.payment_view import batch_pay_view
 from config.permissions import Permission, require
 from database.models import AwardStatus, DisputeResolution
 from services.errors import InputError, NotFound, ZeeGoblinError
@@ -109,6 +111,7 @@ class TipCog(commands.GroupCog, group_name="tip", group_description="The Dude-Mu
     # ------------------------------------------------------------------ browsing
 
     @app_commands.command(name="list", description="Browse the award queue")
+    @app_commands.autocomplete(event_id=rollcall_choices)
     @app_commands.describe(
         status="Which awards to show (default: pending review)",
         event_id="Only awards from this roll call",
@@ -311,6 +314,7 @@ class TipCog(commands.GroupCog, group_name="tip", group_description="The Dude-Mu
     @app_commands.command(
         name="approve-event", description="Approve every pending award from a roll call"
     )
+    @app_commands.autocomplete(event_id=rollcall_choices)
     async def approve_event(self, interaction: discord.Interaction, event_id: int) -> None:
         actor = actor_of(interaction)
         require(actor, Permission.AWARD_APPROVE)
@@ -448,7 +452,12 @@ class TipCog(commands.GroupCog, group_name="tip", group_description="The Dude-Mu
         if not await confirm(interaction, prompt, confirm_label="Create batch"):
             return
         detail = await self.services.payments.create_batch(actor, max_awards=max_awards)
-        await reply(interaction, embed=batch_summary_embed(detail), files=batch_files(detail))
+        await reply(
+            interaction,
+            embed=batch_summary_embed(detail),
+            files=batch_files(detail),
+            view=batch_pay_view(interaction.user.id, detail, actor),
+        )
 
 
 RESOLUTION_CHOICES = [
@@ -488,6 +497,7 @@ class DisputeCog(commands.GroupCog, group_name="dispute", group_description="Fla
         await send_paginated(interaction, render, max(1, page))
 
     @app_commands.command(name="resolve", description="Resolve a dispute")
+    @app_commands.autocomplete(dispute_id=open_dispute_choices)
     @app_commands.choices(outcome=RESOLUTION_CHOICES)
     async def resolve(
         self,

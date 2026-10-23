@@ -241,14 +241,23 @@ class PaymentService:
             return await self._detail(session, batch)
 
     async def list_batches(
-        self, actor: Actor, *, page: int = 1, page_size: int = 10
+        self,
+        actor: Actor,
+        *,
+        status: BatchStatus | None = None,
+        page: int = 1,
+        page_size: int = 10,
     ) -> Page[PaymentBatch]:
         require(actor, Permission.BATCH_VIEW)
         page = max(1, page)
+        conditions = [PaymentBatch.status == status] if status else []
         async with self._db.transaction() as session:
-            total = await session.scalar(select(func.count()).select_from(PaymentBatch))
+            total = await session.scalar(
+                select(func.count()).select_from(PaymentBatch).where(*conditions)
+            )
             rows = await session.scalars(
                 select(PaymentBatch)
+                .where(*conditions)
                 .order_by(PaymentBatch.id.desc())
                 .limit(page_size)
                 .offset((page - 1) * page_size)

@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Awaitable, Callable
 
 import discord
 
-from bot.branding import sol
+from bot.branding import Quips, sol
+from bot.events import guarded
+from bot.helpers import actor_of, bot_of
 from bot.views.confirmation_view import CopyText, Paginator, Renderer
+from database.models import Event, EventStatus
 from services.tip_service import AwardRow
 
 # Approves the given award IDs as the clicking user; returns a summary to show them.
@@ -70,3 +74,59 @@ class ApprovalQueueView(Paginator):
         summary = await self._approve(interaction, award_ids)
         await self._show(interaction, self.page)  # re-render: approved awards leave the list
         await interaction.followup.send(summary, ephemeral=True)
+
+
+class ApproveEventButton(
+    discord.ui.DynamicItem[discord.ui.Button],
+    template=r"zeegoblin:approve-event:(?P<event_id>[0-9]+)",
+):
+    """Persistent "Approve all" on a roll call's staff summary; survives restarts."""
+
+    def __init__(self, event_id: int, pending: int | None = None) -> None:
+        label = f"✅ Approve all ({pending})" if pending else "✅ Approve all pending"
+        super().__init__(
+            discord.ui.Button(
+                label=label,
+                style=discord.ButtonStyle.success,
+                custom_id=f"zeegoblin:approve-event:{event_id}",
+            )
+        )
+        self.event_id = event_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Button, match: re.Match[str]
+    ) -> ApproveEventButton:
+        return cls(int(match["event_id"]))
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if interaction.guild_id != bot_of(interaction).settings.discord_guild_id:
+            return
+        await guarded(interaction, self._approve(interaction))
+
+    async def _approve(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        result = await bot_of(interaction).services.tips.approve_event(
+            actor_of(interaction), self.event_id
+        )
+        if not (result.approved or result.skipped_own or result.skipped_no_wallet):
+            text = f"Nothing left to approve for roll call #{self.event_id}. 🧌"
+        else:
+            text = (
+                f"{Quips.APPROVED}\nApproved **{result.approved}** award(s) totalling "
+                f"**{sol(result.total_lamports)}** from roll call #{self.event_id}."
+            )
+            if result.skipped_own:
+                text += f"\nSkipped {result.skipped_own} of your own."
+            if result.skipped_no_wallet:
+                text += f"\nSkipped {result.skipped_no_wallet} with no wallet."
+        await interaction.followup.send(text, ephemeral=True)
+
+
+def approve_event_view(event: Event) -> discord.ui.View | None:
+    pending = event.award_count - event.awaiting_wallet_count
+    if event.status != EventStatus.CLOSED or pending <= 0:
+        return None
+    view = discord.ui.View(timeout=None)
+    view.add_item(ApproveEventButton(event.id, pending))
+    return view

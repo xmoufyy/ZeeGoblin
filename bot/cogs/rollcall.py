@@ -14,8 +14,10 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
+from bot.autocomplete import rollcall_choices
 from bot.branding import GOLD, MAGENTA, ORANGE, PURPLE, goblin_embed, sol, ts
 from bot.helpers import actor_of, defer, identity_of, reply
+from bot.views.approval_view import approve_event_view
 from bot.views.confirmation_view import confirm, send_paginated
 from bot.views.rollcall_view import active_embed, checkin_view, closed_embed
 from config.permissions import Permission, require
@@ -158,6 +160,7 @@ class RollCallCog(commands.GroupCog, group_name="rollcall", group_description="Z
         await reply(interaction, embed=embed)
 
     @app_commands.command(name="end", description="Close the running roll call now")
+    @app_commands.autocomplete(event_id=rollcall_choices)
     @app_commands.describe(
         event_id="Roll call ID (defaults to the running one)",
         cancel="Cancel without creating any awards",
@@ -317,7 +320,9 @@ class RollCallCog(commands.GroupCog, group_name="rollcall", group_description="Z
                 await self.services.rollcalls.mark_synced(event.id, announcement=True)
         if not event.staff_notified:
             if self.bot.settings.staff_channel_id:  # type: ignore[attr-defined]
-                sent = await self.bot.notify_staff(self._summary_embed(event, result))  # type: ignore[attr-defined]
+                sent = await self.bot.notify_staff(  # type: ignore[attr-defined]
+                    self._summary_embed(event, result), approve_event_view(event)
+                )
             else:
                 sent = True  # nothing to notify; summary is in the logs
             if sent:
@@ -354,8 +359,8 @@ class RollCallCog(commands.GroupCog, group_name="rollcall", group_description="Z
         if not cancelled and event.award_count:
             embed.add_field(
                 name="Next step",
-                value=f"Review with `/tip list` or approve all with "
-                f"`/tip approve-event event_id:{event.id}`.",
+                value="Click **Approve all** below (head mods), or review one by one with "
+                "`/tip list`. Members without a wallet are approved once they add one.",
                 inline=False,
             )
         return embed

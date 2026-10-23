@@ -248,6 +248,15 @@ Someone with both the Mod and Payment Mod roles gets the permissions of both. Us
 
 All replies are private (ephemeral) unless noted.
 
+> **Staff: start with `/staff`.** It shows everything that needs doing: the running roll call,
+> pending reviews, missing wallets, approved-but-unpaid awards, open batches, payments waiting
+> for confirmation, and disputes. Each item has a one-click button that runs the matching
+> command. You only see buttons you're allowed to use.
+>
+> You rarely need to type IDs. Batch, payment, roll-call and dispute options autocomplete
+> (open batches and unconfirmed payments come first), and award IDs autocomplete on
+> `/tip approve` and `/tip void`.
+
 **Members**
 
 | Command | What it does |
@@ -304,6 +313,12 @@ All replies are private (ephemeral) unless noted.
 | `/admin presence activity: text:` | Owner | Change "Playing Gambling on Solpump". The change persists across restarts. |
 | `/admin whoami` | Anyone | Your resolved roles and permissions |
 
+**Staff dashboard**
+
+| Command | Who | What it does |
+|---|---|---|
+| `/staff` | Any staff | Overview of everything waiting, with one-click buttons. **🔄 Refresh** updates it. |
+
 **Promo**
 
 | Command | Who | What it does |
@@ -350,7 +365,9 @@ All replies are private (ephemeral) unless noted.
 6. The announcement changes to **CLOSED**. If `STAFF_CHANNEL_ID` is set, staff get a summary
    there, including any wallets shared by several participants. A shared wallet is flagged for
    a human to look at, not treated as proof of an alt account.
-7. Head mods review the awards with `/tip list` and approve them, usually all at once with
+7. Head mods approve the awards. The quickest way is the **✅ Approve all (N)** button on the
+   staff-channel summary. That button keeps working after restarts, and the bot checks
+   permissions when it's clicked. Alternatives: `/tip list` (approve from a menu) or
    `/tip approve-event`.
 
 **Limits:**
@@ -384,19 +401,25 @@ pending_review ──approve──▶ approved ──export──▶ queued ─�
    Cells that could be read as spreadsheet formulas are escaped. Exporting does **not** mark
    anything as paid.
 2. **Send:** using your own wallet app, send each wallet in the summary its total.
-3. **Record:** for each transaction, run
-   `/payment record batch_id:N wallet:<address> amount:<exact SOL> signature:<tx signature>`.
-   - By default the payment covers all unpaid awards in batch N for that wallet. You can list
-     specific ones with `award_ids:"12 13"`.
+3. **Record:** under the batch (right after exporting, or via `/batch view` or the `/staff`
+   **💸 Pay batch** button), pick the member and wallet from **💸 Record a payment you
+   sent…**. A box opens with the exact amount and full wallet already filled in. Paste the
+   transaction signature and submit.
+   - To type it out instead:
+     `/payment record batch_id:N wallet:<address> amount:<exact SOL> signature:<tx signature>`.
+     By default it covers all unpaid awards in batch N for that wallet. You can list specific
+     ones with `award_ids:"12 13"`.
    - ZeeGoblin checks that the awards are in the batch, unpaid, and locked to **that** wallet,
      and that the amount equals what's owed **exactly**.
    - On a mismatch, nothing is recorded and you're told why. If the transfer really went out
      differently, re-run with `flag_mismatch:True`. The payment is saved as *flagged* and its
      awards go to *disputed* for a head mod.
    - A signature can only be used once.
-4. **Confirm:** after checking the transfer in your wallet or on a block explorer, run
-   `/payment confirm payment_id:<id>`. The awards become **paid (manually confirmed)**. The
-   batch completes when every award in it is settled.
+4. **Confirm:** after checking the transfer in your wallet or on a block explorer, click
+   **✅ Confirm payment sent** on the reply. You can also use **✅ Confirm a recorded
+   payment…** under the batch, or `/payment confirm` (the payment ID autocompletes). The awards
+   become **paid (manually confirmed)**. The batch completes when every award in it is
+   settled.
 
 Paid totals always show their source. "Manually confirmed" means a staff member attested the
 payment, and ZeeGoblin never claims a payment is blockchain-verified. Automatic on-chain

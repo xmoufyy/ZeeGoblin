@@ -45,9 +45,9 @@ def batch_summary_embed(detail: BatchDetail) -> discord.Embed:
         embed.add_field(
             name="Next",
             value=(
-                "Send each wallet's total from your own wallet, then "
-                f"`/payment record batch_id:{batch.id} wallet:… amount:… signature:…`. "
-                "Full addresses are in the CSV files. ZeeGoblin never sends SOL itself."
+                "Send each wallet's total from your own wallet (full addresses are in the "
+                "CSV files), then pick the wallet in **💸 Record a payment you sent** below "
+                "and paste the transaction signature. ZeeGoblin never sends SOL itself."
             ),
             inline=False,
         )

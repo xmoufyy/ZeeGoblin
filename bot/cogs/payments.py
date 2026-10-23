@@ -6,10 +6,12 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from bot.autocomplete import batch_choices, unconfirmed_payment_choices
 from bot.branding import GOLD, MAGENTA, ORANGE, PURPLE, Quips, goblin_embed, sol, ts
 from bot.helpers import actor_of, bot_of, defer, reply
 from bot.views.batch_view import batch_files, batch_summary_embed
 from bot.views.confirmation_view import confirm, send_paginated
+from bot.views.payment_view import batch_pay_view
 from config.permissions import Permission, require
 from database.models import PaymentStatus
 from utils.currency import parse_sol
@@ -48,22 +50,34 @@ class BatchCog(commands.GroupCog, group_name="batch", group_description="Payment
         await send_paginated(interaction, render, max(1, page))
 
     @app_commands.command(name="view", description="Batch details")
+    @app_commands.autocomplete(batch_id=batch_choices)
     async def view(self, interaction: discord.Interaction, batch_id: int) -> None:
         actor = actor_of(interaction)
         require(actor, Permission.BATCH_VIEW)
         await defer(interaction)
         detail = await bot_of(interaction).services.payments.get_batch(actor, batch_id)
-        await reply(interaction, embed=batch_summary_embed(detail))
+        await reply(
+            interaction,
+            embed=batch_summary_embed(detail),
+            view=batch_pay_view(interaction.user.id, detail, actor),
+        )
 
     @app_commands.command(name="export", description="Re-download a batch's CSV files")
+    @app_commands.autocomplete(batch_id=batch_choices)
     async def export(self, interaction: discord.Interaction, batch_id: int) -> None:
         actor = actor_of(interaction)
         require(actor, Permission.BATCH_EXPORT)
         await defer(interaction)
         detail = await bot_of(interaction).services.payments.get_batch(actor, batch_id)
-        await reply(interaction, embed=batch_summary_embed(detail), files=batch_files(detail))
+        await reply(
+            interaction,
+            embed=batch_summary_embed(detail),
+            files=batch_files(detail),
+            view=batch_pay_view(interaction.user.id, detail, actor),
+        )
 
     @app_commands.command(name="cancel", description="Cancel a batch and release unpaid awards")
+    @app_commands.autocomplete(batch_id=batch_choices)
     async def cancel(
         self,
         interaction: discord.Interaction,
@@ -106,6 +120,7 @@ class PaymentCog(
         self.bot = bot
 
     @app_commands.command(name="record", description="Record a SOL transfer you already sent")
+    @app_commands.autocomplete(batch_id=batch_choices)
     @app_commands.describe(
         batch_id="Payment batch the transfer belongs to",
         wallet="Recipient wallet you sent to",
@@ -166,6 +181,7 @@ class PaymentCog(
         await reply(interaction, embed=embed)
 
     @app_commands.command(name="confirm", description="Confirm a recorded payment was sent")
+    @app_commands.autocomplete(payment_id=unconfirmed_payment_choices)
     async def confirm_payment(
         self,
         interaction: discord.Interaction,
@@ -201,6 +217,7 @@ class PaymentCog(
         )
 
     @app_commands.command(name="history", description="Recorded payments")
+    @app_commands.autocomplete(batch_id=batch_choices)
     @app_commands.choices(
         status=[app_commands.Choice(name=v, value=k) for k, v in PAYMENT_STATUS_TEXT.items()]
     )
