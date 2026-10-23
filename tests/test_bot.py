@@ -17,9 +17,11 @@ from bot.events import on_app_command_error
 from bot.views.batch_view import batch_summary_embed
 from bot.views.rollcall_view import CheckInButton, active_embed, closed_embed
 from config.settings import Settings
+from database.models import AwardStatus
 from services.container import Services
 from services.errors import PermissionDenied
 from tests.conftest import HEAD_MOD, MOD, PAYMENT_MOD, make_address, member
+from tests.conftest import OWNER as OWNER_ACTOR
 
 GUILD_ID = 123456789
 
@@ -82,12 +84,17 @@ class FakeResponse:
     def __init__(self) -> None:
         self.done = False
         self.messages: list[str] = []
+        self.edits: list[dict[str, object]] = []
 
     def is_done(self) -> bool:
         return self.done
 
     async def defer(self, **_: object) -> None:
         self.done = True
+
+    async def edit_message(self, **kwargs: object) -> None:
+        self.done = True
+        self.edits.append(kwargs)
 
     async def send_message(self, content: str | None = None, **kwargs: object) -> None:
         self.done = True
@@ -99,15 +106,24 @@ class FakeFollowup:
     def __init__(self, sink: list[str]) -> None:
         self.sink = sink
 
+        self.views: list[object] = []
+
     async def send(self, content: str | None = None, **kwargs: object) -> None:
         embed = kwargs.get("embed")
         self.sink.append(content or (embed.description if embed else ""))
+        if kwargs.get("view") is not None:
+            self.views.append(kwargs["view"])
 
 
-def fake_interaction(bot: ZeeGoblinBot, user_id: int, guild_id: int = GUILD_ID):  # type: ignore[no-untyped-def]
+def fake_interaction(  # type: ignore[no-untyped-def]
+    bot: ZeeGoblinBot, user_id: int, guild_id: int = GUILD_ID, role_ids: tuple[int, ...] = ()
+):
     response = FakeResponse()
     user = SimpleNamespace(
-        id=user_id, name=f"user{user_id}", display_name=f"User {user_id}", roles=[]
+        id=user_id,
+        name=f"user{user_id}",
+        display_name=f"User {user_id}",
+        roles=[SimpleNamespace(id=role_id) for role_id in role_ids],
     )
     return SimpleNamespace(
         client=bot,
@@ -229,3 +245,42 @@ def test_custom_status_activity() -> None:
 
     activity = build_activity(ActivityType.CUSTOM, "🎰 Gamble on Solpump")
     assert isinstance(activity, discord.CustomActivity) and activity.name == "🎰 Gamble on Solpump"
+
+
+async def test_tip_list_approve_buttons(bot: ZeeGoblinBot, services: Services) -> None:
+    head_mod_id, head_mod_role = 2000, 2  # role ID 2 = HEAD_MOD_ROLE_ID in the bot fixture
+    for discord_id in (61, 62, head_mod_id):
+        await services.wallets.set_wallet(member(discord_id), make_address(discord_id))
+        await services.tips.add_manual(MOD, member(discord_id), 10_000_000, f"Call {discord_id}")
+
+    cog = bot.get_cog("TipCog")
+    interaction = fake_interaction(bot, head_mod_id, role_ids=(head_mod_role,))
+    await cog.list_awards.callback(cog, interaction, None, None, 1)
+    [view] = interaction.followup.views
+    # The head mod's own award is listed but can't be picked for approval.
+    assert sorted(o.value for o in view.picker.options) == sorted(
+        str(row.id)
+        for row in (await services.tips.list_awards(OWNER_ACTOR)).items
+        if row.discord_user_id != head_mod_id
+    )
+
+    click = fake_interaction(bot, head_mod_id, role_ids=(head_mod_role,))
+    await view.approve_page.callback(click)
+    assert "Approved 2 award(s)" in click.response.messages[0]
+    remaining = await services.tips.list_awards(OWNER_ACTOR, status=AwardStatus.PENDING_REVIEW)
+    assert [row.discord_user_id for row in remaining.items] == [head_mod_id]
+    assert view.picker not in view.children  # nothing left this user may approve
+
+    # A member who somehow clicks gets nothing approved: roles are re-checked per click.
+    await services.tips.add_manual(MOD, member(63), 10_000_000, "Call 63")
+    await services.wallets.set_wallet(member(63), make_address(63))
+    sneaky = fake_interaction(bot, head_mod_id)  # same user, head-mod role removed
+    summary = await view._approve(
+        sneaky,
+        [
+            (await services.tips.list_awards(OWNER_ACTOR, status=AwardStatus.PENDING_REVIEW))
+            .items[0]
+            .id
+        ],
+    )
+    assert "Not approved" in summary

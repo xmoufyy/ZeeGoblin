@@ -109,8 +109,12 @@ class Paginator(_OwnedView):
         self.next_button.disabled = self.page >= self.pages
 
     async def _show(self, interaction: discord.Interaction, page: int) -> None:
+        page = max(1, page)
         embed, self.pages = await self.render(page)
-        self.page = min(page, self.pages)
+        if page > self.pages:  # the list shrank (e.g. items were approved); show the last page
+            page = self.pages
+            embed, self.pages = await self.render(page)
+        self.page = page
         self._sync_buttons()
         await interaction.response.edit_message(embed=embed, view=self)
 

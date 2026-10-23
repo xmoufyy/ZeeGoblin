@@ -274,7 +274,7 @@ All replies are private (ephemeral) unless noted.
 
 | Command | Who | What it does |
 |---|---|---|
-| `/tip list status: event_id: page:` | Staff | Browse awards. Defaults to pending review. Each award shows its wallet: 🔒 the locked payout wallet, or 👛 the member's current wallet before approval. **📋 Copy wallets** privately sends that page's addresses as plain text, one per line, in list order (long-press → Copy Text). |
+| `/tip list status: event_id: page:` | Staff | Browse awards. Defaults to pending review. Each award shows its wallet: 🔒 the locked payout wallet, or 👛 the member's current wallet before approval. **📋 Copy wallets** privately sends that page's addresses as plain text, one per line, in list order (long-press → Copy Text). Head mods viewing pending awards also get **✅ Approve selected awards…** (pick from a menu) and **✅ Approve all on page**. Your own awards are never offered. |
 | `/tip add user: amount: reason:` | Mod+ | Request a manual award, which goes to review |
 | `/tip approve award_id:` | Head Mod+ | Approve one award. The ID field autocompletes. |
 | `/tip approve-event event_id:` | Head Mod+ | Approve every pending award from a roll call |

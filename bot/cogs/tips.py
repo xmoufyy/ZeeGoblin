@@ -8,11 +8,12 @@ from discord.ext import commands
 
 from bot.branding import GOLD, MAGENTA, ORANGE, PURPLE, Quips, goblin_embed, sol, status_text, ts
 from bot.helpers import actor_of, bot_of, defer, identity_of, reply
+from bot.views.approval_view import ApprovalQueueView
 from bot.views.batch_view import batch_files, batch_summary_embed
 from bot.views.confirmation_view import confirm, send_paginated
 from config.permissions import Permission, require
 from database.models import AwardStatus, DisputeResolution
-from services.errors import InputError, NotFound
+from services.errors import InputError, NotFound, ZeeGoblinError
 from services.tip_service import AwardRow
 from utils.currency import parse_sol
 
@@ -124,11 +125,13 @@ class TipCog(commands.GroupCog, group_name="tip", group_description="The Dude-Mu
         require(actor, Permission.AWARD_VIEW_QUEUE)
         await defer(interaction)
         wanted = AwardStatus(status.value) if status else AwardStatus.PENDING_REVIEW
+        shown: list[AwardRow] = []  # rows on the page currently displayed
 
         async def render(number: int) -> tuple[discord.Embed, int]:
             result = await self.services.tips.list_awards(
                 actor, status=wanted, event_id=event_id, page=number, page_size=10
             )
+            shown[:] = result.items
             total = sum(row.amount_lamports for row in result.items)
             lines = [award_line(row, show_wallet=True) for row in result.items] or [
                 "Nothing here. 🧌"
@@ -147,9 +150,53 @@ class TipCog(commands.GroupCog, group_name="tip", group_description="The Dude-Mu
             wallets = [row.display_wallet for row in result.items if row.display_wallet]
             return "\n".join(wallets) or "No wallets on this page."
 
-        await send_paginated(
-            interaction, render, max(1, page), copy_text=copy_wallets, copy_label="📋 Copy wallets"
+        if wanted != AwardStatus.PENDING_REVIEW or not actor.can(Permission.AWARD_APPROVE):
+            await send_paginated(
+                interaction,
+                render,
+                max(1, page),
+                copy_text=copy_wallets,
+                copy_label="📋 Copy wallets",
+            )
+            return
+
+        def approvable() -> list[AwardRow]:
+            if actor.can(Permission.APPROVE_OWN_AWARD):
+                return list(shown)
+            return [row for row in shown if row.discord_user_id != actor.discord_id]
+
+        async def approve_ids(click: discord.Interaction, award_ids: list[int]) -> str:
+            clicker = actor_of(click)  # roles are re-checked on every click
+            approved: list[AwardRow] = []
+            failed: list[str] = []
+            for award_id in award_ids:
+                try:
+                    approved.append(await self.services.tips.approve(clicker, award_id))
+                except ZeeGoblinError as exc:
+                    failed.append(f"#{award_id}: {exc}")
+            lines = []
+            if approved:
+                total = sum(row.amount_lamports for row in approved)
+                lines.append(
+                    f"{Quips.APPROVED}\nApproved {len(approved)} award(s) totalling "
+                    f"{sol(total)}: " + ", ".join(f"#{row.id}" for row in approved)
+                )
+            if failed:
+                lines.append("Not approved:\n" + "\n".join(failed))
+            return "\n\n".join(lines)
+
+        first_embed, pages = await render(max(1, page))
+        view = ApprovalQueueView(
+            interaction.user.id,
+            render,
+            max(1, min(page, pages)),
+            pages,
+            current_rows=approvable,
+            approve=approve_ids,
+            copy_text=copy_wallets,
+            copy_label="📋 Copy wallets",
         )
+        await reply(interaction, embed=first_embed, view=view)
 
     @app_commands.command(name="view", description="Details for one award")
     @app_commands.checks.cooldown(5, 30)
