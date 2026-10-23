@@ -50,20 +50,30 @@ async def run() -> None:
 
     db = Database(settings.database_url)
     services = build_services(db, settings.limits())
-    bot = ZeeGoblinBot(settings, services)
+    token = settings.discord_token.get_secret_value()
     try:
-        async with bot:
-            await bot.start(settings.discord_token.get_secret_value())
+        try:
+            async with ZeeGoblinBot(settings, services) as bot:
+                await bot.start(token)
+        except discord.PrivilegedIntentsRequired:
+            if not settings.enable_message_checkin:
+                raise
+            # Typed "present" check-ins are optional; keep the bot running with buttons only.
+            log.warning(
+                "ENABLE_MESSAGE_CHECKIN=true but the Message Content intent is off in the "
+                "Developer Portal (Bot > Privileged Gateway Intents). Continuing with button "
+                "check-ins only."
+            )
+            settings = settings.model_copy(update={"enable_message_checkin": False})
+            async with ZeeGoblinBot(settings, services) as bot:
+                await bot.start(token)
     except discord.LoginFailure:
         log.error(
             "Discord rejected the bot token. Reset it in the Developer Portal and update .env."
         )
         raise SystemExit(3) from None
     except discord.PrivilegedIntentsRequired:
-        log.error(
-            "ENABLE_MESSAGE_CHECKIN=true needs the Message Content intent. Enable it under "
-            "Bot > Privileged Gateway Intents in the Developer Portal, or set it to false."
-        )
+        log.error("Discord requires a privileged intent that is not enabled for this bot.")
         raise SystemExit(4) from None
     finally:
         await db.dispose()

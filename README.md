@@ -62,6 +62,9 @@ py -3.12 -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
+> **Command Prompt (cmd.exe) instead of PowerShell?** `Activate.ps1` only works in PowerShell.
+> In cmd use `.venv\Scripts\activate.bat`, or skip activation and just double-click `start.bat`.
+>
 > If PowerShell says running scripts is disabled, run
 > `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or use `.\.venv\Scripts\python.exe`
 > directly in place of `python`.
@@ -112,10 +115,11 @@ wrong if Python, the dependencies, or `.env` are missing.
 4. In Discord, turn on **User Settings → Advanced → Developer Mode**. This lets you right-click
    to copy server, user, role, and channel IDs.
 
-**Slash command registration:** each time the bot starts, it registers its commands to
-`DISCORD_GUILD_ID` only. They appear in that server within seconds and are never published
-globally. This happens once per process start, not on reconnects. Set
-`SYNC_COMMANDS_ON_STARTUP=false` to skip it.
+**Slash command registration:** on startup the bot registers its commands to
+`DISCORD_GUILD_ID` only (never globally), and only when the command definitions have changed
+since the last registration. Unchanged restarts log `Slash commands unchanged; skipping
+registration`. Discord rate-limits registration, so this keeps quick restarts fast. Set
+`SYNC_COMMANDS_ON_STARTUP=false` to skip it entirely.
 
 **Hiding staff commands (recommended):** go to **Server Settings → Integrations → ZeeGoblin**
 and restrict `/tip`, `/batch`, `/payment`, `/dispute`, `/admin` and `/rollcall` to your staff
@@ -142,7 +146,7 @@ hiding is cosmetic, not the security boundary.
 | `MAX_ROLLCALL_PARTICIPANTS` | | Hard cap (default 5000) |
 | `MAX_MANUAL_AWARD` | | Largest `/tip add` amount (default 1.0) |
 | `REQUIRE_SEPARATE_PAYMENT_CONFIRMER` | | `true` requires a different staff member to confirm a payment than the one who recorded it (the owner is exempt) |
-| `ENABLE_MESSAGE_CHECKIN` | | `true` also accepts typed "present"/"here" messages. Needs the Message Content intent. |
+| `ENABLE_MESSAGE_CHECKIN` | | `true` also accepts typed "present"/"here" messages. Needs the Message Content intent; if that intent is off, the bot logs a warning and runs with button check-ins only. |
 | `SYNC_COMMANDS_ON_STARTUP` | | Default `true` |
 | `BOT_ACTIVITY_TYPE` / `BOT_ACTIVITY_TEXT` | | Default `playing` / `Gambling on Solpump` |
 | `LOG_LEVEL` | | `INFO` (default), `DEBUG`, `WARNING`, … |
@@ -392,8 +396,8 @@ Re-approval locks in the new wallet. Queued, submitted, and paid awards can neve
 The automated tests cover the services, the database, and the command definitions offline.
 These checks need a real Discord server. A private test server with test roles works well.
 
-1. Start the bot. The log should show `Synced 8 slash command group(s)` and
-   `Connected to Discord as ZeeGoblin#…`.
+1. Start the bot. The log should show `Synced 8 slash command group(s)` (or `Slash commands
+   unchanged` on later starts) and `Connected to Discord as ZeeGoblin#…`.
 2. As a member: `/wallet set` with your public address, then `/wallet view`, then `/profile`.
 3. As a mod: `/rollcall start duration:1 reward:0.001`. Click **I'M HERE!** from two accounts,
    and twice from one of them. You should see one duplicate warning.
@@ -468,7 +472,9 @@ overlays, support tickets, clip and suggestion tools.
 | Slash commands don't appear | Check that `SYNC_COMMANDS_ON_STARTUP=true` and the guild ID is right, then restart Discord (Ctrl+R) |
 | "Only works inside the Dude-Munity server" | `DISCORD_GUILD_ID` points to a different server |
 | "I need these permissions in #channel" | Give the bot View Channel, Send Messages, and Embed Links there |
-| `PrivilegedIntentsRequired` | Enable the Message Content intent, or set `ENABLE_MESSAGE_CHECKIN=false` |
+| "Message Content intent is off … button check-ins only" | Enable **Message Content Intent** under Bot → Privileged Gateway Intents, or set `ENABLE_MESSAGE_CHECKIN=false` to silence it |
+| Startup pauses for up to a minute after "Recovery: …" | Discord is rate-limiting command registration after several quick restarts. Wait; it continues on its own. |
+| `Processing -File '' failed` / "cannot find the path" when activating | You're in cmd.exe. Use `.venv\Scripts\activate.bat` or `start.bat`. |
 | Staff get "You don't have permission" | Check the role IDs in `.env` and run `/admin whoami` |
 | `database is locked` in the log | Another program has the DB open (a DB browser, a second bot copy). Close it. |
 | Activate.ps1 "running scripts is disabled" | `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` |

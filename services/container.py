@@ -28,15 +28,16 @@ class SettingsStore:
         async with self._db.transaction() as session:
             return await session.scalar(select(BotSetting.value).where(BotSetting.key == key))
 
-    async def set(self, key: str, value: str, actor_id: int) -> None:
+    async def set(self, key: str, value: str, actor_id: int | None) -> None:
+        """``actor_id=None`` means ZeeGoblin itself changed the setting (stored as 0)."""
         async with self._db.transaction() as session:
             setting = await session.get(BotSetting, key)
             before = setting.value if setting else None
             if setting is None:
-                session.add(BotSetting(key=key, value=value, updated_by_discord_id=actor_id))
+                session.add(BotSetting(key=key, value=value, updated_by_discord_id=actor_id or 0))
             else:
                 setting.value = value
-                setting.updated_by_discord_id = actor_id
+                setting.updated_by_discord_id = actor_id or 0
             record_audit(
                 session,
                 actor_id=actor_id,

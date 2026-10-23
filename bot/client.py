@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 
 import discord
@@ -68,9 +70,22 @@ class ZeeGoblinBot(commands.Bot):
             # never global). setup_hook runs once per process, not on reconnects.
             guild = discord.Object(id=self.settings.discord_guild_id)
             self.tree.copy_global_to(guild=guild)
+            # Only re-register when the command definitions changed: Discord rate-limits
+            # registration, and quick restarts otherwise stall startup for up to a minute.
+            payload = [
+                command.to_dict(self.tree) for command in self.tree.get_commands(guild=guild)
+            ]
+            digest = hashlib.sha256(
+                json.dumps(payload, sort_keys=True, default=str).encode()
+            ).hexdigest()
+            hash_key = f"commands.hash.{guild.id}"
+            if await self.services.settings.get(hash_key) == digest:
+                log.info("Slash commands unchanged; skipping registration")
+                return
             try:
                 synced = await self.tree.sync(guild=guild)
                 log.info("Synced %d slash command group(s) to guild %s", len(synced), guild.id)
+                await self.services.settings.set(hash_key, digest, None)
             except discord.Forbidden:
                 log.error(
                     "Missing access to register commands in guild %s. Was the bot invited with "
