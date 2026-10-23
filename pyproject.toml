@@ -1,0 +1,23 @@
+[project]
+name = "zeegoblin"
+version = "1.0.0"
+description = "ZeeGoblin - Discord roll calls, SOL tip ledger and manual payout tracking for the Dude-Munity"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "ASYNC", "SIM", "RUF"]
+ignore = ["RUF001", "RUF012"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
+"database/migrations/versions/*" = ["E501"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+filterwarnings = ["ignore:.audioop. is deprecated:DeprecationWarning"]
